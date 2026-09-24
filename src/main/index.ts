@@ -2,7 +2,8 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkForUpdates } from './updater'
-import { getSaveSource, initSaveSource, registerSaveSourceIpc } from './save-source'
+import { createSaveSource, getSaveSource, registerSaveSourceIpc } from './save-source'
+import { initPersistence, registerPersistenceIpc, shutdownPersistence } from './persistence'
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
@@ -35,14 +36,21 @@ function createMainWindow(): BrowserWindow {
   return window
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('app:check-for-updates', () => checkForUpdates())
   registerSaveSourceIpc()
-  void initSaveSource().catch(() => {
-    // loadSettings is already failure-safe; this guard is belt-and-suspenders so an
-    // unexpected init error can never surface as an unhandled rejection in main
-  })
+  registerPersistenceIpc()
+
+  // Phase C startup ordering: DB opens first (failure = degraded, never a crash);
+  // the save source is then CREATED, persistence listeners attach, and only then
+  // does the source start — the first checkpoint/health event can never be missed.
+  const persistence = initPersistence()
+  const source = await createSaveSource().catch(() => null)
+  if (persistence && source) {
+    persistence.attachTo(source)
+  }
+  source?.start()
 
   mainWindow = createMainWindow()
 
@@ -54,7 +62,7 @@ app.whenReady().then(() => {
 })
 
 app.on('will-quit', () => {
-  getSaveSource()?.stop()
+  shutdownPersistence(getSaveSource())
 })
 
 app.on('window-all-closed', () => {

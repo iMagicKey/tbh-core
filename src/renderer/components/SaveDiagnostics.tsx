@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { SaveSummaryDto } from '../../shared/save-source'
+import type { DatabaseStatsDto, DatabaseStatusDto } from '../../shared/database'
 
 const copy = {
   en: {
@@ -20,6 +21,13 @@ const copy = {
     never: 'never',
     notAvailable: '—',
     minutes: 'min',
+    database: 'Database',
+    schema: 'Schema',
+    checkpoints: 'Checkpoints',
+    runs: 'Runs',
+    sessions: 'Sessions',
+    lastPersisted: 'Last persisted',
+    statsUnavailable: 'Unavailable',
   },
   ru: {
     title: 'Источник Save',
@@ -39,6 +47,13 @@ const copy = {
     never: 'никогда',
     notAvailable: '—',
     minutes: 'мин',
+    database: 'База данных',
+    schema: 'Схема',
+    checkpoints: 'Чекпоинты',
+    runs: 'Раны',
+    sessions: 'Сессии',
+    lastPersisted: 'Последняя запись',
+    statsUnavailable: 'Недоступно',
   },
 } as const
 
@@ -70,11 +85,15 @@ const passwordSourceLabels: Record<string, { en: string; ru: string }> = {
 export function SaveDiagnostics({ locale }: { locale: Locale }) {
   const t = copy[locale]
   const [summary, setSummary] = useState<SaveSummaryDto | null>(null)
+  const [dbStatus, setDbStatus] = useState<DatabaseStatusDto | null>(null)
+  const [dbStats, setDbStats] = useState<DatabaseStatsDto | null>(null)
   const [busy, setBusy] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
 
   const reload = useCallback(() => {
     void window.tbhCore?.getSaveSummary().then(setSummary)
+    void window.tbhCore?.getDatabaseStatus().then(setDbStatus)
+    void window.tbhCore?.getDatabaseStats().then(setDbStats)
   }, [])
 
   useEffect(() => {
@@ -168,6 +187,60 @@ export function SaveDiagnostics({ locale }: { locale: Locale }) {
           )}
         </div>
       )}
+
+      <div className="mt-5 border-t border-zinc-800 pt-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">{t.database}</h3>
+          <span
+            className={`text-sm font-medium ${
+              dbStatus?.state === 'healthy'
+                ? 'text-emerald-400'
+                : dbStatus?.state === 'degraded'
+                  ? 'text-amber-400'
+                  : dbStatus?.state === 'error'
+                    ? 'text-red-400'
+                    : 'text-zinc-400'
+            }`}
+          >
+            {dbStatus?.state ?? 'uninitialized'}
+          </span>
+        </div>
+        <dl className="grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t.schema}</dt>
+            <dd className="text-zinc-300">
+              {dbStatus?.schemaVersion !== null && dbStatus?.schemaVersion !== undefined
+                ? `v${dbStatus.schemaVersion}`
+                : t.notAvailable}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t.lastPersisted}</dt>
+            <dd className="text-zinc-300">
+              {formatTime(dbStatus?.lastWriteAt ?? null, locale, t.never)}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t.checkpoints}</dt>
+            {/* null stats = UNAVAILABLE (broken/unopened DB), distinct from a real 0 */}
+            <dd className="text-zinc-300">
+              {dbStats === null || dbStats === undefined ? t.statsUnavailable : dbStats.checkpointCount}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t.runs}</dt>
+            <dd className="text-zinc-300">
+              {dbStats === null || dbStats === undefined ? t.statsUnavailable : dbStats.runCount}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-zinc-500">{t.sessions}</dt>
+            <dd className="text-zinc-300">
+              {dbStats === null || dbStats === undefined ? t.statsUnavailable : dbStats.sessionCount}
+            </dd>
+          </div>
+        </dl>
+      </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button

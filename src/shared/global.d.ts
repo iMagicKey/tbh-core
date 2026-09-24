@@ -25,6 +25,12 @@ declare global {
       selectGameDir(): Promise<
         import('./save-source').SaveSourceStatus | null
       >
+      getDatabaseStatus(): Promise<
+        import('./database').DatabaseStatusDto | null
+      >
+      getDatabaseStats(): Promise<
+        import('./database').DatabaseStatsDto | null
+      >
     }
   }
 }
