@@ -4,7 +4,7 @@
 // numeric fields may arrive as number OR numeric string (Phase A: HeroExp, playTime), and
 // parse failures surface as `null` — NEVER as a silent 0.
 
-import type { SaveCheckpoint, SaveHero, SaveItem } from './types'
+import type { SaveBoxes, SaveCheckpoint, SaveHero, SaveItem } from './types'
 
 // .NET ticks (100ns since 0001-01-01) -> unix ms
 const TICKS_TO_MS_DIVIDEND = 10_000 // 100ns units per ms
@@ -178,17 +178,23 @@ function normalizeAggregates(value: unknown): SaveCheckpoint['aggregates'] {
 function normalizeBoxes(value: unknown): SaveCheckpoint['boxes'] {
   const record = asRecord(value)
   if (!record) return null
-  const types = asArray(record['BoxTypes'])
-    .map((v) => parseInteger(v))
-    .filter((v): v is number => v !== undefined)
-  const uniqueIds = asArray(record['BoxUniqueId'] ?? record['BoxUniqueIds'])
-    .map((v) => parseIntegralString(v))
-    .filter((v): v is string => v !== undefined)
-  const quantities = asArray(record['BoxQuantity'] ?? record['BoxQuantities'])
-    .map((v) => parseInteger(v))
-    .filter((v): v is number => v !== undefined)
-  if (types.length === 0 && uniqueIds.length === 0 && quantities.length === 0) return null
-  return { boxTypes: types, boxUniqueIds: uniqueIds, boxQuantities: quantities }
+  // INDEX-ALIGNED parse: never compact parallel arrays independently — a malformed value in
+  // one array must not shift positions and re-associate quantity/identity (future
+  // Player.log reconciliation depends on slot identity).
+  const types = asArray(record['BoxTypes']).map((v) => parseInteger(v) ?? null)
+  const uniqueIds = asArray(record['BoxUniqueId'] ?? record['BoxUniqueIds']).map(
+    (v) => parseIntegralString(v) ?? null,
+  )
+  const quantities = asArray(record['BoxQuantity'] ?? record['BoxQuantities']).map(
+    (v) => parseInteger(v) ?? null,
+  )
+  const length = Math.max(types.length, uniqueIds.length, quantities.length)
+  if (length === 0) return null
+  const entries: SaveBoxes['entries'] = []
+  for (let i = 0; i < length; i++) {
+    entries.push({ type: types[i] ?? null, uniqueId: uniqueIds[i] ?? null, quantity: quantities[i] ?? null })
+  }
+  return { entries }
 }
 
 export interface NormalizeContext {

@@ -108,12 +108,30 @@ describe('normalizeCheckpoint', () => {
     expect(checkpoint.aggregates.stageFails).toBe(5)
   })
 
-  it('normalizes BoxData parallel arrays with exact unique ids', () => {
+  it('normalizes BoxData as index-aligned entries with exact unique ids', () => {
     expect(checkpoint.boxes).toEqual({
-      boxTypes: [1, 0],
-      boxUniqueIds: [BIG_ID_B, BIG_ID_A],
-      boxQuantities: [2, 9],
+      entries: [
+        { type: 1, uniqueId: BIG_ID_B, quantity: 2 },
+        { type: 0, uniqueId: BIG_ID_A, quantity: 9 },
+      ],
     })
+  })
+
+  it('preserves BoxData index alignment when only ONE parallel array has a malformed slot', () => {
+    // index 0 valid; index 1 malformed ONLY in BoxQuantity; index 2 valid — index 2 must
+    // stay associated with index 2 (independent compaction would shift it onto index 1's data)
+    const inner = parseInner(makeInnerSaveText())
+    ;(inner as Record<string, unknown>)['BoxData'] = {
+      BoxTypes: [1, 0, 1],
+      BoxUniqueId: [BIG_ID_B, BIG_ID_A, BIG_ID_A],
+      BoxQuantity: [2, 'not-a-number', 9],
+    }
+    const boxes = normalizeCheckpoint(inner, CTX).boxes
+    expect(boxes?.entries).toEqual([
+      { type: 1, uniqueId: BIG_ID_B, quantity: 2 },
+      { type: 0, uniqueId: BIG_ID_A, quantity: null }, // malformed slot -> null, NOT removed
+      { type: 1, uniqueId: BIG_ID_A, quantity: 9 }, // still index 2
+    ])
   })
 
   it('ignores unknown additive fields at every level', () => {

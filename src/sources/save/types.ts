@@ -57,7 +57,8 @@ export interface SaveCheckpoint {
     stageFails: number | null
   }
 
-  // owned boxes (parallel arrays) — enough for future drop reconciliation
+  // owned boxes — INDEX-ALIGNED entries (parallel-array positions preserved; malformed
+  // slots become null instead of being compacted away, so quantity/identity stay associated)
   boxes: SaveBoxes | null
 }
 
@@ -88,9 +89,8 @@ export interface SaveItem {
 }
 
 export interface SaveBoxes {
-  boxTypes: number[]
-  boxUniqueIds: string[]
-  boxQuantities: number[]
+  /** One entry per original parallel-array index; null = malformed/missing at that index. */
+  entries: Array<{ type: number | null; uniqueId: string | null; quantity: number | null }>
 }
 
 /** Where a password came from. The value itself never enters status objects. */

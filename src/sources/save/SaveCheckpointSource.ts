@@ -2,29 +2,45 @@
 //
 // Responsibilities (and nothing else):
 //   * resolve the save path (custom override or default);
-//   * resolve the ES3 password (manual env override or game-asset extraction);
-//   * poll file metadata; decode ONLY when mtime/size changed (atomic replacement aware:
-//     we never hold the file open; re-stat after read catches in-flight replacements);
-//   * classify failures (MID_WRITE transient, password/parse permanent-ish) with typed codes;
-//   * retain the last known-good checkpoint across transient failures;
-//   * expose state/health and a narrow subscription API.
+//   * resolve the ES3 password (manual env override or async game-asset extraction);
+//   * poll file metadata; decode ONLY when mtime/size changed;
+//   * read STABLY: stat -> read -> re-stat, verifying size/mtime did not move and the
+//     encrypted payload is block-aligned; MID_WRITE retries RE-READ the file (never re-decode
+//     a stale torn buffer) so a write completing mid-poll recovers in the SAME cycle;
+//   * classify failures with typed codes; a final SOURCE_INTERNAL_ERROR net keeps the source
+//     alive (and Electron main un-crashed) on genuinely unexpected errors;
+//   * freshness is judged by the CHECKPOINT'S SOURCE TIMESTAMP (observedAtMs = lastSavedTime,
+//     fileMtime fallback) — never by when we happened to read it;
+//   * retain the last known-good checkpoint across transient failures.
 //
 // NOT its job: per-run telemetry (memory source), reconciliation, analytics.
 // The file is only ever READ — never written, renamed, replaced, or truncated by us.
 
 import { readFile, stat } from 'node:fs/promises'
 import type { SaveSourceStatus } from '../../shared/save-source'
-import { decodeEs3File } from './es3'
+import { ES3_IV_LENGTH, decodeEs3File } from './es3'
 import { SaveSourceError } from './errors'
-import { discoverGameInstall, gameDataDir, resolveSavePath } from './discovery'
+import { discoverGameInstall, resolveSavePath } from './discovery'
 import { normalizeCheckpoint } from './normalize'
 import { resolveEs3Password } from './password'
 import type { PasswordResolution, SaveCheckpoint } from './types'
 
 export const SAVE_POLL_INTERVAL_MS = 5_000 // Phase A evidence: save cadence ~1-3 min; 5s poll is comfortable
-export const STALE_AFTER_MS = 10 * 60_000 // no NEW save decoded for this long -> stale
-export const MID_WRITE_RETRIES = 3 // bounded in-tick retries for a block-misaligned read
+export const STALE_AFTER_MS = 10 * 60_000 // checkpoint SOURCE time older than this -> stale
+export const MID_WRITE_RETRIES = 3 // bounded re-read retries within one poll cycle
 export const MID_WRITE_RETRY_DELAY_MS = 150
+
+export interface SaveSourceIo {
+  stat?: (path: string) => Promise<{ mtimeMs: number; size: number }>
+  readFile?: (path: string) => Promise<Buffer>
+}
+
+interface StableRead {
+  bytes: Buffer
+  mtimeMs: number
+  size: number
+  signature: string
+}
 
 export interface SaveSourceOptions {
   pollIntervalMs?: number
@@ -37,6 +53,7 @@ export interface SaveSourceOptions {
   customGamePath?: string | null
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  io?: SaveSourceIo
 }
 
 type Listener<T> = (value: T) => void
@@ -48,6 +65,8 @@ export class SaveCheckpointSource {
   private readonly midWriteRetryDelayMs: number
   private readonly now: () => number
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly statFile: NonNullable<SaveSourceIo['stat']>
+  private readonly readFile: NonNullable<SaveSourceIo['readFile']>
   private readonly manualPassword: string | null
   private customSavePath: string | null
   private customGamePath: string | null
@@ -81,6 +100,8 @@ export class SaveCheckpointSource {
     this.midWriteRetryDelayMs = options.midWriteRetryDelayMs ?? MID_WRITE_RETRY_DELAY_MS
     this.now = options.now ?? (() => Date.now())
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.statFile = options.io?.stat ?? stat
+    this.readFile = options.io?.readFile ?? readFile
     this.manualPassword = options.manualPassword?.trim() || null
     this.customSavePath = options.customSavePath ?? null
     this.customGamePath = options.customGamePath ?? null
@@ -123,7 +144,7 @@ export class SaveCheckpointSource {
       gameInstallPath: this.gameInstallPath,
       passwordProvenance: this.password?.provenance ?? 'none',
       lastAttemptAt: this.lastAttemptAt,
-      lastSuccessfulReadAt: this.lastSuccessfulReadAt,
+      lastSuccessfulReadAt: this.lastSuccessfulReadAt, // diagnostics only — NOT freshness
       lastError: this.lastError,
     }
   }
@@ -144,7 +165,12 @@ export class SaveCheckpointSource {
 
   // ------------------------------------------------------------------ internals
 
-  private setState(state: SaveSourceStatus['state'], reasonCode: SaveSourceStatus['reasonCode'], detail: string | null, error?: SaveSourceStatus['lastError']): void {
+  private setState(
+    state: SaveSourceStatus['state'],
+    reasonCode: SaveSourceStatus['reasonCode'],
+    detail: string | null,
+    error?: SaveSourceStatus['lastError'],
+  ): void {
     this.state = state
     this.reasonCode = reasonCode
     this.detail = detail
@@ -169,6 +195,15 @@ export class SaveCheckpointSource {
     this.polling = true
     try {
       await this.pollOnce()
+    } catch (error) {
+      // Final safety net: a genuinely unexpected failure (programming error, exotic fs
+      // condition) must not kill the loop or crash Electron main. Typed failures are
+      // handled inside pollOnce; this net is never their replacement.
+      const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      this.setState('degraded', 'SOURCE_INTERNAL_ERROR', message, {
+        code: 'SOURCE_INTERNAL_ERROR',
+        detail: message,
+      })
     } finally {
       this.polling = false
       this.scheduleNextPoll()
@@ -183,7 +218,7 @@ export class SaveCheckpointSource {
     this.savePath = resolved.path
     let fileStat: { mtimeMs: number; size: number }
     try {
-      const st = await stat(resolved.path)
+      const st = await this.statFile(resolved.path)
       fileStat = { mtimeMs: st.mtimeMs, size: st.size }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
@@ -203,98 +238,116 @@ export class SaveCheckpointSource {
 
     const signature = `${fileStat.mtimeMs}:${fileStat.size}`
     if (signature === this.lastDecodedSignature) {
-      this.applyStaleness()
+      this.evaluateFreshness()
       return
     }
 
-    // ---- read the file (transient failures keep last good; do not advance signature)
-    let bytes: Buffer
-    try {
-      bytes = await readFile(resolved.path)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      this.setState('degraded', 'SAVE_UNREADABLE', `read failed (${code ?? 'unknown'})`, {
-        code: 'SAVE_UNREADABLE',
-        detail: String(code ?? 'unknown'),
+    // ---- stable read with true re-read retries (a write completing mid-poll recovers NOW,
+    // not on the next poll; torn bytes from a failed attempt are never re-decoded)
+    const stable = await this.readStableWithRetries(resolved.path)
+    if (!stable) {
+      // still torn after the bounded budget: transient degraded, signature NOT advanced —
+      // the next normal poll retries; last good checkpoint is retained
+      this.setState('degraded', 'MID_WRITE', 'save caught mid-write; will retry next poll', {
+        code: 'MID_WRITE',
+        detail: 'stable read did not converge',
       })
       return
     }
-    // atomic-replacement guard: if the file changed size while we read it, we likely caught
-    // the replace mid-flight — treat as transient mid-write, do not decode a torn buffer
-    try {
-      const after = await stat(resolved.path)
-      if (after.size !== fileStat.size || after.mtimeMs !== fileStat.mtimeMs) {
-        this.handleMidWrite('file replaced during read')
-        return
-      }
-    } catch {
-      this.handleMidWrite('re-stat failed')
-      return
-    }
 
-    // ---- password (resolve lazily; re-resolved on refresh or after an invalid decrypt)
+    // ---- password (async asset extraction; resolved lazily, re-resolved on refresh or
+    // after an invalid decrypt with the game_asset provenance)
     if (!this.password) {
       this.gameInstallPath = this.discoverInstall()
       try {
-        this.password = resolveEs3Password({
+        this.password = await resolveEs3Password({
           manualPassword: this.manualPassword,
           gameInstallPath: this.gameInstallPath,
         })
       } catch (error) {
-        const err = error as SaveSourceError
+        const err = error instanceof SaveSourceError ? error : new SaveSourceError('SOURCE_INTERNAL_ERROR', String(error))
         this.setState('error', err.code, err.detail, { code: err.code, detail: err.detail })
         return
       }
     }
 
-    // ---- decode with bounded mid-write retries
-    for (let attempt = 0; attempt <= this.midWriteRetries; attempt++) {
-      try {
-        const decoded = decodeEs3File(bytes, this.password.password)
-        const checkpoint = normalizeCheckpoint(decoded.inner, {
-          fileMtimeMs: fileStat.mtimeMs,
-          polledAtMs: this.lastAttemptAt,
-          sourcePath: resolved.path,
-        })
-        this.lastGoodCheckpoint = checkpoint
-        this.lastSuccessfulReadAt = this.now()
-        this.lastDecodedSignature = signature
-        this.lastError = null
-        this.setState('healthy', 'SAVE_FOUND', resolved.origin === 'custom' ? 'custom save path' : null)
-        for (const listener of this.checkpointListeners) listener(checkpoint)
+    // ---- decode + normalize (block constraints already validated by the stable read)
+    try {
+      const decoded = decodeEs3File(stable.bytes, this.password.password)
+      const checkpoint = normalizeCheckpoint(decoded.inner, {
+        fileMtimeMs: stable.mtimeMs,
+        polledAtMs: this.lastAttemptAt,
+        sourcePath: resolved.path,
+      })
+      this.lastGoodCheckpoint = checkpoint
+      this.lastSuccessfulReadAt = this.now()
+      this.lastDecodedSignature = stable.signature
+      this.lastError = null
+      for (const listener of this.checkpointListeners) listener(checkpoint)
+      // recover to healthy from ANY prior state (error/degraded included), then judge
+      // freshness by the CHECKPOINT'S SOURCE TIME: a successfully decoded but old
+      // checkpoint is 'stale', which is not an error
+      this.setState('healthy', 'SAVE_FOUND', resolved.origin === 'custom' ? 'custom save path' : null)
+      this.evaluateFreshness()
+      return
+    } catch (error) {
+      const err = error instanceof SaveSourceError ? error : new SaveSourceError('DECRYPT_FAILED', String(error))
+      if (err.code === 'MID_WRITE') {
+        // defensive: the stable read already screens this; classify transient regardless
+        this.setState('degraded', 'MID_WRITE', err.detail, { code: 'MID_WRITE', detail: err.detail })
         return
-      } catch (error) {
-        const err = error instanceof SaveSourceError ? error : new SaveSourceError('DECRYPT_FAILED', String(error))
-        if (err.code === 'MID_WRITE') {
-          if (attempt < this.midWriteRetries) {
-            await this.sleep(this.midWriteRetryDelayMs)
-            continue
-          }
-          this.handleMidWrite(err.detail) // transient: next poll retries (signature not advanced)
-          return
-        }
-        if (err.code === 'PASSWORD_INVALID') {
-          // a game update can rotate the password: drop the cached one and let the next
-          // poll re-extract; with a MANUAL password this is a hard error (user must fix it)
-          const wasGameAsset = this.password.provenance === 'game_asset'
-          this.password = null
-          if (wasGameAsset) {
-            this.setState('degraded', 'PASSWORD_INVALID', 'decrypt failed; will re-extract password', {
-              code: 'PASSWORD_INVALID',
-              detail: 'cached game-asset password rejected',
-            })
-            return
-          }
-          this.setState('error', 'PASSWORD_INVALID', 'manual password rejected by decrypt', {
+      }
+      if (err.code === 'PASSWORD_INVALID') {
+        // a game update can rotate the password: drop the cached one and let the next
+        // poll re-extract; with a MANUAL password this is a hard error (user must fix it)
+        const wasGameAsset = this.password.provenance === 'game_asset'
+        this.password = null
+        if (wasGameAsset) {
+          this.setState('degraded', 'PASSWORD_INVALID', 'decrypt failed; will re-extract password', {
             code: 'PASSWORD_INVALID',
-            detail: 'manual password invalid',
+            detail: 'cached game-asset password rejected',
           })
           return
         }
-        this.setState('error', err.code, err.detail, { code: err.code, detail: err.detail })
+        this.setState('error', 'PASSWORD_INVALID', 'manual password rejected by decrypt', {
+          code: 'PASSWORD_INVALID',
+          detail: 'manual password invalid',
+        })
         return
       }
+      this.setState('error', err.code, err.detail, { code: err.code, detail: err.detail })
+      return
     }
+  }
+
+  /**
+   * Stat -> read -> re-stat, verifying stability and encrypted-payload block constraints.
+   * Returns null when the file looks torn/mid-write. Never decodes; throws typed fs errors
+   * upward (handled by the caller's stat/read error paths or the internal-error net).
+   */
+  private async readStableSave(path: string): Promise<StableRead | null> {
+    const before = await this.statFile(path)
+    const bytes = await this.readFile(path)
+    const after = await this.statFile(path)
+    if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) return null
+    const payloadLength = bytes.length - ES3_IV_LENGTH
+    if (bytes.length < ES3_IV_LENGTH + 16 || payloadLength % 16 !== 0) return null
+    return {
+      bytes,
+      mtimeMs: after.mtimeMs,
+      size: after.size,
+      signature: `${after.mtimeMs}:${after.size}`,
+    }
+  }
+
+  /** Bounded re-read retries: sleep, then RE-STAT/RE-READ the file (fresh bytes each time). */
+  private async readStableWithRetries(path: string): Promise<StableRead | null> {
+    for (let attempt = 0; attempt <= this.midWriteRetries; attempt++) {
+      if (attempt > 0) await this.sleep(this.midWriteRetryDelayMs)
+      const stable = await this.readStableSave(path)
+      if (stable) return stable
+    }
+    return null
   }
 
   private discoverInstall(): string | null {
@@ -302,19 +355,24 @@ export class SaveCheckpointSource {
     return install ? install.path : null
   }
 
-  private handleMidWrite(detail: string | null): void {
-    // transient: keep last good checkpoint, keep lastDecodedSignature unchanged so the next
-    // poll retries the read; bounded by poll interval (no busy loop)
-    this.setState('degraded', 'MID_WRITE', detail, { code: 'MID_WRITE', detail })
-  }
-
-  private applyStaleness(): void {
-    if (this.state !== 'healthy' && this.state !== 'stale') return
-    const lastChange = Math.max(this.lastSuccessfulReadAt ?? 0, this.lastGoodCheckpoint?.fileMtimeMs ?? 0)
-    const idleFor = this.now() - lastChange
-    if (idleFor > this.staleAfterMs) {
-      this.setState('stale', 'STALE_CHECKPOINT', `no new save for ${Math.round(idleFor / 60_000)} min`)
-    } else if (this.state === 'stale') {
+  /**
+   * Freshness by the checkpoint's SOURCE timestamp (observedAtMs = lastSavedTime, with the
+   * documented fileMtime fallback) — never by read/poll time. Also recovers a transient
+   * 'degraded' state back to healthy/stale when the file is unchanged since the last good
+   * decode (the transient condition has cleared).
+   */
+  private evaluateFreshness(): void {
+    if (this.state === 'error' || this.state === 'disconnected') return
+    const checkpoint = this.lastGoodCheckpoint
+    if (!checkpoint) return
+    const ageMs = this.now() - checkpoint.observedAtMs
+    if (ageMs > this.staleAfterMs) {
+      if (this.state !== 'stale') {
+        this.setState('stale', 'STALE_CHECKPOINT', `checkpoint source time is ${Math.round(ageMs / 60_000)} min old`)
+      }
+      return
+    }
+    if (this.state !== 'healthy') {
       this.setState('healthy', 'SAVE_FOUND', null)
     }
   }

@@ -18,6 +18,16 @@ export const BIG_ID_B = '18446744073709551615' // 2^64 - 1 — full unsigned 64-
 export const KNOWN_TICKS_MS = Date.UTC(2026, 0, 15, 12, 0, 0)
 export const KNOWN_TICKS = String((KNOWN_TICKS_MS + 62_135_596_800_000) * 10_000)
 
+/** .NET ticks string for an arbitrary unix-ms instant (staleness tests use injected clocks). */
+export function ticksFor(unixMs: number): string {
+  return String((unixMs + 62_135_596_800_000) * 10_000)
+}
+
+/** Inner-save text with lastSavedTime set to the given unix-ms instant (bare literal). */
+export function makeInnerSaveAt(unixMs: number, overrides: InnerSaveOverrides = {}): string {
+  return makeInnerSaveText(overrides).split(KNOWN_TICKS).join(ticksFor(unixMs))
+}
+
 export interface InnerSaveOverrides {
   playTime?: number | string
   currentStageKey?: number

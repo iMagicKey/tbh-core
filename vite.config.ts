@@ -13,6 +13,18 @@ export default defineConfig({
       },
       preload: {
         input: 'src/preload/index.ts',
+        // Emit a deterministic CJS `preload.js` matching the path the main window loads
+        // (the plugin's default names it `<entry-basename>.mjs` under "type": "module",
+        // which is also dubious for sandboxed preloads).
+        vite: {
+          build: {
+            rolldownOptions: {
+              output: {
+                entryFileNames: 'preload.js',
+              },
+            },
+          },
+        },
       },
       renderer: {},
     }),

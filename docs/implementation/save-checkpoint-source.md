@@ -60,7 +60,9 @@ Failure is non-fatal when a manual password exists; otherwise surfaced as
 1. `TBH_CORE_ES3_PASSWORD` env var — session-only manual override (never persisted, never
    crosses IPC, never logged);
 2. automatic extraction from the user's own install (`<install>/*_Data/resources.assets`,
-   `sharedassets0.assets`, `globalgamemanagers.assets`):
+   `sharedassets0.assets`, `globalgamemanagers.assets`) — **asset content is read ASYNC**
+   (`node:fs/promises`): these files can be large and extraction runs in Electron main;
+   small directory existence/list probes stay synchronous:
    - pattern A (tbh-codown): `SaveFile_Live.es3` marker → NUL separators → `[A-Za-z0-9]{8,64}`;
    - pattern B (giba): `ES3Defaults` within 80 bytes before the marker → non-printable
      separator → printable `{8,40}` run (path-like captures rejected);
@@ -98,7 +100,10 @@ string identity round-trips end-to-end (tested with `2^53+1` and `2^64-1`).
 `arrangedPetKey`); currencies (`walletGold` = Key 100001, full list); heroes (key/level/xp/
 unlocked/equipped ids as strings/skill keys); items (exact `uniqueId`, `itemKey`, `registerId`,
 enchant identity); `skillTree`; `runes`; aggregates (`combatGoldEarned` = Type 2/SubKey 1,
-`stageClears`/`stageFails`, raw list); boxes (parallel arrays, exact ids).
+`stageClears`/`stageFails`, raw list); **boxes as INDEX-ALIGNED entries**
+(`boxes.entries[i] = { type, uniqueId, quantity }` by original parallel-array position,
+malformed slots `null` — never compacted, so quantity/identity cannot shift; critical for
+future Player.log reconciliation).
 
 Parse rules: unknown fields ignored; number-or-numeric-string tolerated (incl. comma-decimal,
 observed on `HeroExp`); malformed required values → `null`, never silent 0.
@@ -118,13 +123,26 @@ never erase known-good state.
 
 - poll every `SAVE_POLL_INTERVAL_MS = 5000` (config constant); decode only when
   `mtimeMs:size` signature changed (never re-decode the same content);
-- the file is never held open: stat → read → re-stat (atomic replacement caught by the
-  size/mtime mismatch between the two stats → `MID_WRITE`);
-- block-misaligned ciphertext → `MID_WRITE`: up to `MID_WRITE_RETRIES = 3` in-tick retries,
-  `MID_WRITE_RETRY_DELAY_MS = 150` apart; still failing → `degraded`, signature NOT advanced,
-  next poll retries naturally (no busy loop);
-- `STALE_CHECKPOINT` when no new save decoded for `STALE_AFTER_MS = 10 min` (autosave cadence
-  is ~1–3 min per Phase A).
+- **stable read** (`readStableSave`): stat → read → re-stat, verifying size/mtime did not move
+  AND the encrypted payload is block-aligned (IV + ≥1 full block, `payload % 16 === 0`);
+- **MID_WRITE retries re-read, never re-decode**: on a torn/unstable read the source sleeps
+  (`MID_WRITE_RETRY_DELAY_MS = 150`), then RE-STATS and RE-READS the file (up to
+  `MID_WRITE_RETRIES = 3` fresh attempts) — a save write completing mid-poll recovers in the
+  SAME poll cycle without waiting for the next interval; stale torn bytes are never re-decoded;
+- budget exhausted → `degraded` + `MID_WRITE`, last-good checkpoint retained, signature NOT
+  advanced (the next normal poll retries; no busy loop);
+- unexpected (non-typed) failures hit a final `SOURCE_INTERNAL_ERROR` net: last good kept,
+  source stays alive, next poll scheduled — Electron main never receives an unhandled rejection.
+
+## Freshness (staleness) semantics
+
+Checkpoint freshness is judged by the checkpoint's **SOURCE timestamp**
+(`observedAtMs` = `commonSaveData.lastSavedTime` ticks, with the documented `fileMtime`
+fallback) — never by poll time or `lastSuccessfulReadAt` (the latter is diagnostics only).
+Staleness is evaluated immediately after every successful decode and on every unchanged-file
+poll: a successfully decoded but old checkpoint yields `state = stale` with a valid
+`lastGoodCheckpoint` (not an error). `STALE_AFTER_MS = 10 min` default (autosave cadence
+~1–3 min per Phase A).
 
 ## IPC (narrow, typed)
 
@@ -136,10 +154,26 @@ No generic fs access, no raw save JSON, no password across the bridge. `contextI
 ## Settings / overrides
 
 `userData/settings.json` (atomic tmp+rename) stores `customSavePath`, `customGamePath`.
+The file is user-editable local JSON and is **never trusted by type**: runtime normalization
+accepts only non-empty trimmed strings for the two known keys; arrays, numbers, objects,
+booleans, null, whitespace-only paths and unknown keys are ignored; malformed JSON safely
+yields empty settings (never an unhandled rejection in the polling source).
 The ES3 password is deliberately NOT persisted: plaintext secrets in local JSON are
 undesirable — the manual override is session-only via env var (documented limitation; a secure
 OS credential store could be added later without touching the parser — password resolution is a
 provider chain).
+
+## Live validation status
+
+Reliability pass (2026-09-24): live read-only regression re-run after the refactor — discovery,
+async password extraction, decrypt and checkpoint fields all confirmed on the installed
+TBH 1.2.8 (sanitized results in the PR). Initial Phase B live validation: TESTED (see the
+Phase B PR/handoff). No real save data, paths, or passwords are committed.
+
+## Lifecycle
+
+`app.on('will-quit')` stops the source (clean timer teardown). `getSaveSource()` returns
+`SaveCheckpointSource | null` — no unsafe type assertion.
 
 ## Known limitations
 
@@ -149,9 +183,6 @@ provider chain).
 - `PASSWORD_INVALID` technically also covers rare non-password corruption;
 - `stale` uses a fixed 10-minute threshold (not yet calibrated per-install);
 - no fs.watch (deliberate: Phase A found mtime polling more robust against the game's atomic
-  rewrites); a fast save right at poll time is covered by the mid-write retry path.
-
-## Live validation status
-
-See the Phase B PR/handoff for the recorded status (TESTED with sanitized results, or NOT TESTED
-with the exact maintainer procedure). No real save data, paths, or passwords are committed.
+  rewrites); a fast save right at poll time is covered by the same-cycle re-read retry path;
+- password-related `error` states only re-resolve when the file changes or on manual refresh
+  (the game will eventually save; the Refresh button forces it).

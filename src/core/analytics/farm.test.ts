@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { summarizeRuns } from './farm'
 import type { CompletedRun } from '../../shared/contracts'
 
+// TODO(farm-analytics phase): these scaffold tests encode PRE-review semantics (failed runs
+// excluded from farming rewards). The reviewed Phase A contract (docs/research/farm-analytics.md)
+// requires farm economics to include failed-attempt time and measured rewards. Do NOT port
+// SaveCheckpointSource behavior to match these tests; the analytics module is rewritten in the
+// later farm phase.
+
 const run = (overrides: Partial<CompletedRun>): CompletedRun => ({
   id: crypto.randomUUID(),
   stage: 100,

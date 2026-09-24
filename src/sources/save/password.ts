@@ -15,10 +15,14 @@
 //   B (giba):       `ES3Defaults` within 80 bytes before the marker, then a non-printable
 //                   separator and a printable run of 8..40.
 //
+// Asset CONTENT is read ASYNC (node:fs/promises) — these files can be large and this runs
+// in Electron's main process; small directory existence/listing probes stay synchronous.
+//
 // The resolved password value NEVER enters logs, status objects, or diagnostics — only its
 // provenance does.
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { SaveSourceError } from './errors'
 import type { PasswordResolution } from './types'
@@ -93,21 +97,22 @@ export function extractPasswordFromBuffer(buf: Buffer): string | null {
 }
 
 export interface PasswordIo {
-  readFileSync?: (path: string) => Buffer
+  /** Async asset-content read (large files must not block the main event loop). */
+  readFile?: (path: string) => Promise<Buffer>
   existsSync?: (path: string) => boolean
   readdirSync?: (path: string) => string[]
 }
 
 /**
- * Extract the password from the game install's asset files.
+ * Extract the password from the game install's asset files (ASYNC content reads).
  * Throws GAME_ASSET_UNREADABLE when an asset exists but cannot be read;
  * returns null when no asset carries a matching structure.
  */
-export function extractPasswordFromAssets(
+export async function extractPasswordFromAssets(
   gameInstallPath: string,
   io: PasswordIo = {},
-): { password: string; assetFile: string } | null {
-  const read = io.readFileSync ?? readFileSync
+): Promise<{ password: string; assetFile: string } | null> {
+  const read = io.readFile ?? readFile
   const exists = io.existsSync ?? existsSync
   const listDir = io.readdirSync ?? readdirSync
 
@@ -130,7 +135,7 @@ export function extractPasswordFromAssets(
     if (!exists(assetPath)) continue
     let buf: Buffer
     try {
-      buf = read(assetPath)
+      buf = await read(assetPath)
     } catch (error) {
       throw new SaveSourceError('GAME_ASSET_UNREADABLE', `${name}: ${(error as Error).message}`)
     }
@@ -152,7 +157,7 @@ export interface ResolvePasswordOptions {
  * PASSWORD_NOT_FOUND (install present, extraction found nothing),
  * GAME_ASSET_UNREADABLE (asset read failure).
  */
-export function resolveEs3Password(options: ResolvePasswordOptions): PasswordResolution {
+export async function resolveEs3Password(options: ResolvePasswordOptions): Promise<PasswordResolution> {
   const manual = options.manualPassword?.trim()
   if (manual && manual.length > 0) {
     return { password: manual, provenance: 'manual', assetFile: null }
@@ -163,7 +168,7 @@ export function resolveEs3Password(options: ResolvePasswordOptions): PasswordRes
       'no game installation found and no manual password provided',
     )
   }
-  const extracted = extractPasswordFromAssets(options.gameInstallPath, options.io)
+  const extracted = await extractPasswordFromAssets(options.gameInstallPath, options.io)
   if (!extracted) {
     throw new SaveSourceError('PASSWORD_NOT_FOUND', `no ES3 password structure found in ${options.gameInstallPath}`)
   }

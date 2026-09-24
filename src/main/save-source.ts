@@ -17,8 +17,9 @@ import { loadSettings, saveSettings } from './settings'
 
 let source: SaveCheckpointSource | null = null
 
-export function getSaveSource(): SaveCheckpointSource {
-  return source as SaveCheckpointSource
+/** The running source, or null before initSaveSource() / after app teardown. */
+export function getSaveSource(): SaveCheckpointSource | null {
+  return source
 }
 
 function buildSummary(status: SaveSourceStatus): SaveSummaryDto {

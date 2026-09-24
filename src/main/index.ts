@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkForUpdates } from './updater'
-import { initSaveSource, registerSaveSourceIpc } from './save-source'
+import { getSaveSource, initSaveSource, registerSaveSourceIpc } from './save-source'
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
@@ -39,7 +39,10 @@ app.whenReady().then(() => {
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('app:check-for-updates', () => checkForUpdates())
   registerSaveSourceIpc()
-  void initSaveSource()
+  void initSaveSource().catch(() => {
+    // loadSettings is already failure-safe; this guard is belt-and-suspenders so an
+    // unexpected init error can never surface as an unhandled rejection in main
+  })
 
   mainWindow = createMainWindow()
 
@@ -48,6 +51,10 @@ app.whenReady().then(() => {
       mainWindow = createMainWindow()
     }
   })
+})
+
+app.on('will-quit', () => {
+  getSaveSource()?.stop()
 })
 
 app.on('window-all-closed', () => {

@@ -27,6 +27,8 @@ export type SaveReasonCode =
   | 'PARSE_FAILED'
   | 'STALE_CHECKPOINT'
   | 'STOPPED'
+  /** Final safety net for genuinely unexpected failures — never a replacement for typed codes. */
+  | 'SOURCE_INTERNAL_ERROR'
 
 /** How the current ES3 password was obtained (the value itself never leaves main). */
 export type PasswordProvenance = 'manual' | 'game_asset' | 'none'
