@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { SaveSourceStatus, SaveSummaryDto } from '../shared/save-source'
+import type { DatabaseStatsDto, DatabaseStatusDto } from '../shared/database'
 
 export type UpdateCheckResult =
   | { status: 'disabled-in-dev' }
@@ -16,4 +17,6 @@ contextBridge.exposeInMainWorld('tbhCore', {
   refreshSaveSource: (): Promise<SaveSourceStatus | null> => ipcRenderer.invoke('save:refresh'),
   selectSaveFile: (): Promise<SaveSourceStatus | null> => ipcRenderer.invoke('save:select-file'),
   selectGameDir: (): Promise<SaveSourceStatus | null> => ipcRenderer.invoke('save:select-game-dir'),
+  getDatabaseStatus: (): Promise<DatabaseStatusDto | null> => ipcRenderer.invoke('db:get-status'),
+  getDatabaseStats: (): Promise<DatabaseStatsDto | null> => ipcRenderer.invoke('db:get-stats'),
 })

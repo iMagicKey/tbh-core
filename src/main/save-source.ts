@@ -41,7 +41,12 @@ function buildSummary(status: SaveSourceStatus): SaveSummaryDto {
   }
 }
 
-export async function initSaveSource(): Promise<SaveCheckpointSource> {
+/**
+ * Create the save source WITHOUT starting it. Phase C startup ordering:
+ * the database initializes first, persistence listeners attach, and only then
+ * does the caller call source.start() — the first checkpoint is never missed.
+ */
+export async function createSaveSource(): Promise<SaveCheckpointSource> {
   if (source) return source
   const settings = await loadSettings()
   source = new SaveCheckpointSource({
@@ -50,7 +55,6 @@ export async function initSaveSource(): Promise<SaveCheckpointSource> {
     // session-only manual override; never persisted, never logged, never crosses IPC
     manualPassword: manualPasswordFromEnv(),
   })
-  source.start()
   return source
 }
 
