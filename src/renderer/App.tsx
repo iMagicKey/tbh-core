@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { SaveSourceStateName } from '../shared/save-source'
+import { SaveDiagnostics } from './components/SaveDiagnostics'
 
 type Page = 'Live' | 'Farm' | 'Runs' | 'Compare'
 
@@ -23,10 +25,20 @@ export function App() {
   const [page, setPage] = useState<Page>('Live')
   const [locale, setLocale] = useState<'en' | 'ru'>('en')
   const [version, setVersion] = useState('dev')
+  const [saveState, setSaveState] = useState<SaveSourceStateName | null>(null)
   const t = useMemo(() => copy[locale], [locale])
 
   useEffect(() => {
     void window.tbhCore?.getVersion().then(setVersion)
+  }, [])
+
+  useEffect(() => {
+    const reload = () => {
+      void window.tbhCore?.getSaveStatus().then((status) => setSaveState(status?.state ?? null))
+    }
+    reload()
+    const timer = window.setInterval(reload, 5_000)
+    return () => window.clearInterval(timer)
   }, [])
 
   return (
@@ -76,7 +88,7 @@ export function App() {
           <h2 className="text-2xl font-semibold">{page}</h2>
           <div className="flex gap-3 text-xs">
             <span className="rounded-full border border-zinc-800 px-3 py-1 text-zinc-500">Memory: offline</span>
-            <span className="rounded-full border border-zinc-800 px-3 py-1 text-zinc-500">Save: offline</span>
+            <SaveStatePill state={saveState} />
             <span className="rounded-full border border-zinc-800 px-3 py-1 text-zinc-500">Log: offline</span>
           </div>
         </div>
@@ -87,7 +99,26 @@ export function App() {
             <p className="mt-2 text-sm leading-6 text-zinc-500">{t.sourceHint}</p>
           </div>
         </section>
+
+        {page === 'Live' && (
+          <div className="mt-6">
+            <SaveDiagnostics locale={locale} />
+          </div>
+        )}
       </main>
     </div>
   )
+}
+
+function SaveStatePill({ state }: { state: SaveSourceStateName | null }) {
+  const label = `Save: ${state ?? 'offline'}`
+  const tone =
+    state === 'healthy'
+      ? 'border-emerald-900 text-emerald-400'
+      : state === 'stale' || state === 'degraded' || state === 'discovering'
+        ? 'border-amber-900 text-amber-400'
+        : state === 'error'
+          ? 'border-red-900 text-red-400'
+          : 'border-zinc-800 text-zinc-500'
+  return <span className={`rounded-full border px-3 py-1 ${tone}`}>{label}</span>
 }
