@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      frontend:
+        patterns:
+          - react
+          - react-dom
+          - '@types/react*'
+          - vite
+          - '@vitejs/*'
+          - tailwindcss
+          - '@tailwindcss/*'
+      electron:
+        patterns:
+          - electron
+          - electron-builder
+          - electron-updater
+          - vite-plugin-electron
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

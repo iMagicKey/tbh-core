@@ -1,0 +1,5 @@
+* @iMagicKey
+/src/main/ @iMagicKey
+/src/core/ @iMagicKey
+/src/shared/ @iMagicKey
+/.github/workflows/ @iMagicKey
