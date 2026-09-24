@@ -8,6 +8,7 @@ import { BuildRepository } from '../repositories/BuildRepository'
 import {
   RunConflictError,
   RunRepository,
+  canonicalSlot,
   type RunInput,
 } from '../repositories/RunRepository'
 import { migratedMemoryDb } from './helpers'
@@ -151,6 +152,47 @@ describe('RunRepository', () => {
     expect(repo.insertRun(reordered)).toEqual({ inserted: false })
   })
 
+  it('duplicate with null hero slot is a no-op, NOT a conflict (canonical slot)', () => {
+    const repo = new RunRepository(migratedMemoryDb())
+    const run = makeRun({
+      heroes: [
+        { heroKey: 201, levelStart: 37, levelEnd: 37, xpGained: 1_000, slot: null },
+        { heroKey: 301, levelStart: 37, levelEnd: 38, xpGained: 2_000, slot: null },
+      ],
+    })
+    expect(repo.insertRun(run)).toEqual({ inserted: true })
+    // identical input again — stored rows carry the -1 sentinel, the incoming hash
+    // canonicalizes null the same way, so this must dedupe instead of conflicting
+    expect(repo.insertRun(makeRun({ heroes: [...run.heroes] }))).toEqual({ inserted: false })
+    // and the -1-express form of the same logical payload also dedupes
+    expect(
+      repo.insertRun(
+        makeRun({
+          heroes: run.heroes.map((hero) => ({ ...hero, slot: -1 })),
+        }),
+      ),
+    ).toEqual({ inserted: false })
+  })
+
+  it('same run id with a genuinely different hero slot conflicts', () => {
+    const repo = new RunRepository(migratedMemoryDb())
+    const run = makeRun({
+      heroes: [{ heroKey: 201, levelStart: 37, levelEnd: 37, xpGained: 1_000, slot: null }],
+    })
+    repo.insertRun(run)
+    const differentSlot = makeRun({
+      heroes: [{ heroKey: 201, levelStart: 37, levelEnd: 37, xpGained: 1_000, slot: 2 }],
+    })
+    expect(() => repo.insertRun(differentSlot)).toThrowError(RunConflictError)
+  })
+
+  it('hero rows require identity: heroKey is a required number; canonicalSlot is total', () => {
+    // the RunHeroInput type forbids null heroKey; a row without identity is not persisted.
+    expect(canonicalSlot(null)).toBe(-1)
+    expect(canonicalSlot(2)).toBe(2)
+    expect(canonicalSlot(-1)).toBe(-1)
+  })
+
   it('a failing hero insert rolls back the whole run (atomicity)', () => {
     const repo = new RunRepository(migratedMemoryDb())
     const run = makeRun({
@@ -163,7 +205,7 @@ describe('RunRepository', () => {
     expect(repo.count()).toBe(0) // run row rolled back — no partial data
   })
 
-  it('queries: by stage, by session, recent order', () => {
+  it('queries: by stage, by session, recent order — with HYDRATED hero rows', () => {
     const db = migratedMemoryDb()
     const repo = new RunRepository(db)
     // session rows must exist before runs can reference them (FK)
@@ -178,9 +220,23 @@ describe('RunRepository', () => {
     repo.insertRun(makeRun({ id: 'c', stageKey: 1, endedAtMs: 200, sessionId: 's1' }))
     repo.insertRun(makeRun({ id: 'd', stageKey: 1, endedAtMs: 400 }))
 
-    expect(repo.listRunsByStage(1).map((r) => r.id)).toEqual(['d', 'c', 'a']) // ended DESC
-    expect(repo.listRunsBySession('s1').map((r) => r.id)).toEqual(['c'])
-    expect(repo.listRecentRuns(3).map((r) => r.id)).toEqual(['d', 'b', 'c'])
+    const byStage = repo.listRunsByStage(1)
+    expect(byStage.map((r) => r.id)).toEqual(['d', 'c', 'a']) // ended DESC
+    // RunRecord lists are TRUTHFUL: hero rows are present, not silently empty
+    expect(byStage.every((r) => r.heroes.length === 2)).toBe(true)
+    expect(byStage[0].heroes.map((h) => h.heroKey).sort()).toEqual([201, 301])
+
+    const bySession = repo.listRunsBySession('s1')
+    expect(bySession.map((r) => r.id)).toEqual(['c'])
+    expect(bySession[0].heroes).toHaveLength(2)
+
+    const recent = repo.listRecentRuns(3)
+    expect(recent.map((r) => r.id)).toEqual(['d', 'b', 'c'])
+    expect(recent.every((r) => r.heroes.length === 2)).toBe(true)
+
+    // a run with genuinely zero heroes reports zero (not undefined/hidden)
+    repo.insertRun(makeRun({ id: 'e', stageKey: 9, endedAtMs: 500, heroes: [] }))
+    expect(repo.listRunsByStage(9)[0].heroes).toEqual([])
   })
 
   it('null slot is stored via the -1 sentinel and survives the round trip', () => {

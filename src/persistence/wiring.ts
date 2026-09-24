@@ -42,8 +42,10 @@ export class PersistenceWiring {
     if (!checkpoints || !health) return
     this.unsubscribeCheckpoint = source.onCheckpoint((checkpoint) => {
       try {
-        checkpoints.insertCheckpoint(checkpoint, Date.now())
-        this.lastWriteAt = Date.now()
+        const result = checkpoints.insertCheckpoint(checkpoint, Date.now())
+        // "last persisted" means an ACTUAL successful mutation — a dedupe no-op
+        // is not a database write
+        if (result.inserted) this.lastWriteAt = Date.now()
         this.dbManager.markHealthy()
       } catch (error) {
         // persistence degraded — the SAVE source itself stays untouched
@@ -52,7 +54,8 @@ export class PersistenceWiring {
     })
     this.unsubscribeHealth = source.onHealthChange((status) => {
       try {
-        health.recordSaveSourceTransition(status, Date.now())
+        const wrote = health.recordSaveSourceTransition(status, Date.now())
+        if (wrote) this.lastWriteAt = Date.now() // same rule: real writes only
       } catch (error) {
         this.dbManager.markDegraded(error)
       }
@@ -84,16 +87,17 @@ export class PersistenceWiring {
     }
   }
 
-  getStats(): DatabaseStatsDto {
-    const empty: DatabaseStatsDto = {
-      checkpointCount: 0,
-      healthEventCount: 0,
-      runCount: 0,
-      sessionCount: 0,
-      buildCount: 0,
-    }
+  /**
+   * Counts, or NULL when they cannot be queried (DB unavailable or broken).
+   * Null is intentionally distinct from all-zero counts: "unavailable" must
+   * never look like "healthy but empty". The DB STATUS stays the authoritative
+   * error surface — stats expose no exception details.
+   */
+  getStats(): DatabaseStatsDto | null {
     try {
-      if (!this.checkpoints || !this.health || !this.runs || !this.sessions || !this.builds) return empty
+      if (!this.checkpoints || !this.health || !this.runs || !this.sessions || !this.builds) {
+        return null
+      }
       return {
         checkpointCount: this.checkpoints.count(),
         healthEventCount: this.health.count(),
@@ -102,7 +106,7 @@ export class PersistenceWiring {
         buildCount: this.builds.count(),
       }
     } catch {
-      return empty
+      return null
     }
   }
 

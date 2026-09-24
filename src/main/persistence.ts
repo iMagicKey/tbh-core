@@ -18,15 +18,17 @@ export function getPersistence(): PersistenceWiring | null {
 
 /**
  * Open the database under Electron's userData and create the wiring.
- * NEVER throws — database failure is a degraded app state, not a crash:
- * a null result simply means the save source will run without persistence.
+ * NEVER throws and NEVER returns null: on database-open failure the wiring
+ * still exists so diagnostics can expose the DatabaseManager error, while the
+ * repositories are unavailable (inert) and the save source keeps running
+ * without persistence.
  */
-export function initPersistence(): PersistenceWiring | null {
+export function initPersistence(): PersistenceWiring {
   const dbManager = new DatabaseManager()
   const databasePath = path.join(app.getPath('userData'), DATABASE_FILENAME)
-  const opened = dbManager.open(databasePath) // records its own error state on failure
+  dbManager.open(databasePath) // failure recorded in the manager's error state
   wiring = new PersistenceWiring(dbManager)
-  return opened ? wiring : wiring
+  return wiring
 }
 
 /**

@@ -48,8 +48,8 @@ describe('PersistenceWiring — source independence and failure behavior', () =>
     source.start()
 
     await until(() => expect(source.getState().state === 'healthy' || source.getState().state === 'stale').toBe(true))
-    await until(() => expect(wiring.getStats().checkpointCount).toBe(1))
-    expect(wiring.getStats().healthEventCount).toBeGreaterThan(0)
+    await until(() => expect(wiring.getStats()?.checkpointCount).toBe(1))
+    expect(wiring.getStats()?.healthEventCount ?? 0).toBeGreaterThan(0)
 
     source.stop()
     wiring.close()
@@ -77,7 +77,42 @@ describe('PersistenceWiring — source independence and failure behavior', () =>
     source.start()
     source.stop()
     expect(wiring.getStatus().state).toBe('error')
-    expect(wiring.getStats().checkpointCount).toBe(0) // no false success reported
+    expect(wiring.getStats()).toBeNull() // UNAVAILABLE, distinct from all-zero
+  })
+
+  it('checkpoint dedupe no-op does NOT advance lastWriteAt (real writes only)', async () => {
+    const dbPath = tempDbPath()
+    const manager = new DatabaseManager()
+    expect(manager.open(dbPath)).toBe(true)
+    const wiring = new PersistenceWiring(manager)
+
+    const { makeSaveFile, makeInnerSaveAt } = await import('../../sources/save/__tests__/fixtures')
+    const savePath = `${dbPath}.es3`
+    const { writeFileSync, utimesSync } = await import('node:fs')
+    const innerText = makeInnerSaveAt(Date.now() - 1_000)
+    writeFileSync(savePath, makeSaveFile({ innerText })) // fresh IV, same source state
+    utimesSync(savePath, new Date(1_760_000_000_000), new Date(1_760_000_000_000))
+
+    const source = makeSource(savePath)
+    wiring.attachTo(source)
+    source.start()
+    await until(() => expect(wiring.getStats()?.checkpointCount).toBe(1))
+    const afterFirstWrite = wiring.getStatus().lastWriteAt
+    expect(afterFirstWrite).not.toBeNull()
+
+    // rewrite the SAME logical save (identical source state, different bytes/mtime):
+    // the source decodes it again, the DB dedupes (no-op) — lastWriteAt must NOT move
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    writeFileSync(savePath, makeSaveFile({ innerText })) // new random IV
+    utimesSync(savePath, new Date(1_760_000_090_000), new Date(1_760_000_090_000))
+    await until(() =>
+      expect(source.getState().lastAttemptAt).toBeGreaterThan(1_760_000_090_000),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
+    expect(wiring.getStats()?.checkpointCount).toBe(1) // deduped, still one row
+    expect(wiring.getStatus().lastWriteAt).toBe(afterFirstWrite) // NO fake "last persisted"
+    source.stop()
   })
 
   it('a checkpoint write failure marks the DB degraded and NEVER breaks the source (guarded listener)', async () => {
@@ -95,7 +130,7 @@ describe('PersistenceWiring — source independence and failure behavior', () =>
     const source = makeSource(savePath)
     wiring.attachTo(source)
     source.start()
-    await until(() => expect(wiring.getStats().checkpointCount).toBe(1))
+    await until(() => expect(wiring.getStats()?.checkpointCount).toBe(1))
     expect(manager.getStatus().state).toBe('healthy')
 
     // break persistence mid-flight (schema lost), then force a NEW checkpoint (changed save)
@@ -107,7 +142,7 @@ describe('PersistenceWiring — source independence and failure behavior', () =>
     // dropped table — waiting for it also proves the SOURCE survived that failure
     await until(() => expect(manager.getStatus().state).toBe('degraded'))
     expect(source.getLastCheckpoint()).not.toBeNull() // source still holds its checkpoints
-    expect(wiring.getStats().checkpointCount).toBe(0) // guarded stats: no false success
+    expect(wiring.getStats()).toBeNull() // broken DB -> stats UNAVAILABLE, not zero
 
     source.stop()
   })

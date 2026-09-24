@@ -27,6 +27,7 @@ const copy = {
     runs: 'Runs',
     sessions: 'Sessions',
     lastPersisted: 'Last persisted',
+    statsUnavailable: 'Unavailable',
   },
   ru: {
     title: 'Источник Save',
@@ -52,6 +53,7 @@ const copy = {
     runs: 'Раны',
     sessions: 'Сессии',
     lastPersisted: 'Последняя запись',
+    statsUnavailable: 'Недоступно',
   },
 } as const
 
@@ -220,15 +222,22 @@ export function SaveDiagnostics({ locale }: { locale: Locale }) {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-zinc-500">{t.checkpoints}</dt>
-            <dd className="text-zinc-300">{dbStats?.checkpointCount ?? t.notAvailable}</dd>
+            {/* null stats = UNAVAILABLE (broken/unopened DB), distinct from a real 0 */}
+            <dd className="text-zinc-300">
+              {dbStats === null || dbStats === undefined ? t.statsUnavailable : dbStats.checkpointCount}
+            </dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-zinc-500">{t.runs}</dt>
-            <dd className="text-zinc-300">{dbStats?.runCount ?? t.notAvailable}</dd>
+            <dd className="text-zinc-300">
+              {dbStats === null || dbStats === undefined ? t.statsUnavailable : dbStats.runCount}
+            </dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-zinc-500">{t.sessions}</dt>
-            <dd className="text-zinc-300">{dbStats?.sessionCount ?? t.notAvailable}</dd>
+            <dd className="text-zinc-300">
+              {dbStats === null || dbStats === undefined ? t.statsUnavailable : dbStats.sessionCount}
+            </dd>
           </div>
         </dl>
       </div>

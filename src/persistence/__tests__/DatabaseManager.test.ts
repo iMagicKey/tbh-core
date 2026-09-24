@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { DatabaseManager } from '../DatabaseManager'
 import { MigrationError, currentSchemaVersion, runMigrations } from '../migrations'
+import { SessionRepository } from '../repositories/SessionRepository'
 import { tempDbPath } from './helpers'
 
 describe('DatabaseManager', () => {
@@ -59,6 +60,52 @@ describe('DatabaseManager', () => {
     expect(status.state).toBe('error')
     expect(status.lastErrorCode).toBeTruthy()
     expect(manager.getDatabase()).toBeNull()
+  })
+
+  it('post-construction failure closes the connection and preserves the ORIGINAL error', () => {
+    const dbPath = tempDbPath()
+    // sabotage: pre-create a schema_migrations table with the WRONG shape so the
+    // migration runner fails AFTER the connection was constructed
+    const saboteur = new DatabaseSync(dbPath)
+    saboteur.exec('CREATE TABLE schema_migrations (wrong_column TEXT)')
+    saboteur.close()
+
+    const manager = new DatabaseManager()
+    expect(manager.open(dbPath)).toBe(false)
+    expect(manager.getStatus().state).toBe('error')
+    // the ORIGINAL error (the sabotaged ledger: "no such column: version") is
+    // preserved — not replaced by any cleanup artifact
+    expect(manager.getStatus().lastErrorDetail ?? '').toContain('no such column: version')
+    expect(manager.getDatabase()).toBeNull()
+
+    // no lingering lock: a fresh connection to the same file opens fine
+    const probe = new DatabaseSync(dbPath)
+    probe.close()
+
+    // recovery: another manager on a FRESH path works normally
+    const recovered = new DatabaseManager()
+    expect(recovered.open(tempDbPath())).toBe(true)
+    expect(recovered.getStatus().state).toBe('healthy')
+    recovered.close()
+  })
+
+  it('second open() on the same manager closes the previous connection first', () => {
+    const manager = new DatabaseManager()
+    const pathA = tempDbPath()
+    const pathB = tempDbPath()
+    expect(manager.open(pathA)).toBe(true)
+    expect(manager.filename).toBe('test.sqlite3')
+    expect(manager.getStatus().schemaVersion).toBe(1)
+
+    // reopen on a different path: old connection closed, new one tracked
+    expect(manager.open(pathB)).toBe(true)
+    expect(manager.getStatus().state).toBe('healthy')
+    expect(manager.getStatus().databasePath).toBe(pathB)
+    // the new connection is fully usable
+    const repo = new SessionRepository(manager.getDatabase()!)
+    repo.createSession({ id: 's', startedAtMs: 1, appVersion: '0.0.1', createdAtMs: 1 })
+    expect(repo.count()).toBe(1)
+    manager.close()
   })
 
   it('filename exposes only the basename', () => {

@@ -35,19 +35,46 @@ export class DatabaseManager {
   /**
    * Open (or create) the database and run pending migrations.
    * NEVER throws: on failure the manager is left in the 'error' state.
+   *
+   * Reopen semantics: calling open() again on the SAME manager closes the
+   * current connection first (documented, tested) — the manager then tracks
+   * only the newly opened database.
+   *
+   * Failure cleanup: any error AFTER the DatabaseSync constructor still closes
+   * the constructed connection (secondary close failures ignored) so no handle
+   * lingers; the ORIGINAL error is preserved in the status.
    */
   open(databasePath: string): boolean {
+    if (this.db) {
+      try {
+        this.db.close()
+      } catch {
+        // closing a broken previous connection — ignore, we are reopening
+      }
+      this.db = null
+    }
     this.state = 'opening'
     this.databasePath = databasePath
+    this.schemaVersion = null
+    this.pragmas = {}
+    let db: DatabaseSync | null = null
     try {
-      this.db = new DatabaseSync(databasePath)
+      db = new DatabaseSync(databasePath)
+      this.db = db
       this.applyPragmas()
-      runMigrations(this.db)
-      this.schemaVersion = currentSchemaVersion(this.db)
+      runMigrations(db)
+      this.schemaVersion = currentSchemaVersion(db)
       this.state = 'healthy'
       return true
     } catch (error) {
-      this.recordError(error)
+      this.recordError(error) // the ORIGINAL open/migration error stays authoritative
+      if (db) {
+        try {
+          db.close()
+        } catch {
+          // secondary cleanup failure deliberately ignored (original error preserved)
+        }
+      }
       this.db = null
       return false
     }

@@ -119,23 +119,38 @@ sanitized (`<profile>` masks the user profile path) and never contain secrets.
 - **RunRepository**: `insertRun` (transactional with `run_heroes`; identical duplicate id →
   no-op, conflicting duplicate id → typed `RunConflictError` — never a silent overwrite),
   `getRun`, `listRecentRuns(limit)`, `listRunsByStage`, `listRunsBySession`, `count()`.
+  List methods return COMPLETE `RunRecord`s with hydrated hero rows (single batched
+  `WHERE run_id IN (...)` query — no N+1); they never claim `RunRecord` while silently
+  dropping child data. Canonicalization: `canonicalSlot(slot) = slot ?? -1` is THE one slot
+  representation across hashing, insertion, stored rows and record rebuilds (a null-slot
+  duplicate can never false-conflict); `heroKey` is REQUIRED (`INTEGER NOT NULL` — a hero
+  row without identity is not persisted; capture-quality diagnostics represent the miss).
 
 ## Failure behavior
 
 - DB open/migration failure: `DatabaseManager` enters `error`, `getDatabase() === null`,
-  `initPersistence` returns wiring with no repositories — the save source still starts and
-  runs; diagnostics report `error`; nothing is falsely reported persisted.
+  `initPersistence()` returns NON-NULL wiring (diagnostics keep exposing the manager error)
+  with no repositories — the save source still starts and runs; diagnostics report `error`;
+  nothing is falsely reported persisted. A failure AFTER the connection was constructed
+  closes that connection (secondary close failures ignored; the ORIGINAL error stays
+  authoritative — no lingering handle). Calling `open()` again on the same manager closes
+  the previous connection first (documented reopen semantics).
 - Write failure mid-run (e.g. schema lost): the guarded listener marks the DB `degraded` and
   leaves the source untouched; subsequent checkpoints attempt writes again (no retry queue,
   per spec). Success after a degraded period restores `healthy`.
+- `lastWriteAt` ("last persisted") advances ONLY on actual successful mutations: a checkpoint
+  dedupe no-op or a suppressed duplicate health transition is NOT reported as a write.
 - Save-source errors (SAVE_NOT_FOUND etc.) are NOT database errors — domains stay independent.
 
 ## IPC (narrow)
 
 `db:get-status` → `DatabaseStatusDto` (state, schemaVersion, database **basename**,
-lastWriteAt, lastErrorCode/Detail — sanitized/truncated). `db:get-stats` → counts. No SQL, no
-raw rows, no file paths beyond the basename cross the bridge. Renderer diagnostics card shows
-Database state / Schema / Checkpoints / Runs / Sessions / Last persisted.
+lastWriteAt, lastErrorCode/Detail — sanitized/truncated). `db:get-stats` → counts, or **NULL
+when they cannot be queried** (DB unavailable/broken) — "unavailable" is rendered distinctly
+from real zeros and never looks like "healthy but empty"; the DB STATUS stays the
+authoritative error surface (stats expose no exception details). No SQL, no raw rows, no file
+paths beyond the basename cross the bridge. Renderer diagnostics card shows Database state /
+Schema / Checkpoints / Runs / Sessions / Last persisted (or "Unavailable").
 
 ## SQL safety
 

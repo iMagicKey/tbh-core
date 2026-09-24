@@ -5,17 +5,33 @@
 //   * same id + logically identical payload → no-op ({ inserted: false });
 //   * same id + different payload → typed RunConflictError (never a silent
 //     overwrite, never duplicate child rows).
+//
+// Canonicalization invariants:
+//   * hero slot: ONE representation everywhere (hash, insert, stored rows,
+//     record rebuild) — canonicalSlot(slot) = slot ?? -1;
+//   * heroKey is REQUIRED (SQL: INTEGER NOT NULL): a hero row without identity
+//     is not persisted — capture-quality diagnostics represent the miss instead.
 
 import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 
 export interface RunHeroInput {
-  heroKey: number | null
+  /** Hero identity is required — unknown heroes are simply not persisted. */
+  heroKey: number
   levelStart: number | null
   levelEnd: number | null
   xpGained: number | null
-  /** Formation slot; null normalized to the -1 sentinel for the unique key. */
+  /** Formation slot; null canonicalizes to the -1 sentinel. */
   slot: number | null
+}
+
+export interface RunHeroRecord {
+  heroKey: number
+  levelStart: number | null
+  levelEnd: number | null
+  xpGained: number | null
+  /** Canonical slot (-1 when the input slot was null). */
+  slot: number
 }
 
 export interface RunInput {
@@ -48,14 +64,6 @@ export interface RunInput {
   createdAtMs: number
 }
 
-export interface RunHeroRecord {
-  heroKey: number | null
-  levelStart: number | null
-  levelEnd: number | null
-  xpGained: number | null
-  slot: number
-}
-
 export interface RunRecord extends Omit<RunInput, 'heroes'> {
   heroes: RunHeroRecord[]
 }
@@ -69,9 +77,14 @@ export class RunConflictError extends Error {
   }
 }
 
+/** The single canonical hero-slot representation used across persistence identity. */
+export function canonicalSlot(slot: number | null): number {
+  return slot ?? -1
+}
+
 /**
  * Canonical content hash of a run payload (id + all queryable fields + heroes,
- * normalized). Two logically identical payloads hash equally — the basis of the
+ * canonicalized). Two logically identical payloads hash equally — the basis of the
  * duplicate no-op; any difference conflicts.
  */
 export function computeRunContentHash(input: RunInput): string {
@@ -102,17 +115,13 @@ export function computeRunContentHash(input: RunInput): string {
     input.sourceHealthEpoch ?? '',
     input.reconciliationStatus ?? '',
     ...[...input.heroes]
-      .sort((a, b) => (a.heroKey ?? -1) - (b.heroKey ?? -1) || (a.slot ?? -1) - (b.slot ?? -1))
+      .sort((a, b) => a.heroKey - b.heroKey || canonicalSlot(a.slot) - canonicalSlot(b.slot))
       .map(
         (hero) =>
-          `${hero.heroKey ?? ''}:${hero.levelStart ?? ''}:${hero.levelEnd ?? ''}:${hero.xpGained ?? ''}:${hero.slot ?? ''}`,
+          `${hero.heroKey}:${hero.levelStart ?? ''}:${hero.levelEnd ?? ''}:${hero.xpGained ?? ''}:${canonicalSlot(hero.slot)}`,
       ),
   ]
   return createHash('sha256').update(parts.join('|')).digest('hex')
-}
-
-function normalizeSlot(slot: number | null): number {
-  return slot === null ? -1 : slot
 }
 
 export class RunRepository {
@@ -182,7 +191,7 @@ export class RunRepository {
           hero.levelStart,
           hero.levelEnd,
           hero.xpGained,
-          normalizeSlot(hero.slot),
+          canonicalSlot(hero.slot),
         )
       }
       this.db.exec('COMMIT')
@@ -206,40 +215,68 @@ export class RunRepository {
       this.db
         .prepare('SELECT * FROM run_heroes WHERE run_id = ? ORDER BY hero_key, slot')
         .all(id) as Array<Record<string, unknown>>
-    ).map((hero) => ({
-      heroKey: hero['hero_key'] === null ? null : Number(hero['hero_key']),
-      levelStart: hero['level_start'] === null ? null : Number(hero['level_start']),
-      levelEnd: hero['level_end'] === null ? null : Number(hero['level_end']),
-      xpGained: hero['xp_gained'] === null ? null : Number(hero['xp_gained']),
-      slot: Number(hero['slot']),
-    }))
+    ).map(this.rowToHero)
     return { ...this.rowToRun(row), heroes }
   }
 
+  /** Recent runs, most recent first — FULL records with hydrated hero rows. */
   listRecentRuns(limit: number): RunRecord[] {
     const rows = this.db
       .prepare('SELECT * FROM runs ORDER BY ended_at_ms DESC, id DESC LIMIT ?')
       .all(limit) as Array<Record<string, unknown>>
-    return rows.map((row) => ({ ...this.rowToRun(row), heroes: [] }))
+    return this.hydrate(rows)
   }
 
+  /** Runs of a stage, most recent first — FULL records with hydrated hero rows. */
   listRunsByStage(stageKey: number, limit = 100): RunRecord[] {
     const rows = this.db
       .prepare('SELECT * FROM runs WHERE stage_key = ? ORDER BY ended_at_ms DESC, id DESC LIMIT ?')
       .all(stageKey, limit) as Array<Record<string, unknown>>
-    return rows.map((row) => ({ ...this.rowToRun(row), heroes: [] }))
+    return this.hydrate(rows)
   }
 
+  /** Runs of a session, most recent first — FULL records with hydrated hero rows. */
   listRunsBySession(sessionId: string, limit = 100): RunRecord[] {
     const rows = this.db
       .prepare('SELECT * FROM runs WHERE session_id = ? ORDER BY ended_at_ms DESC, id DESC LIMIT ?')
       .all(sessionId, limit) as Array<Record<string, unknown>>
-    return rows.map((row) => ({ ...this.rowToRun(row), heroes: [] }))
+    return this.hydrate(rows)
   }
 
   count(): number {
     const row = this.db.prepare('SELECT COUNT(*) AS c FROM runs').get() as { c: number }
     return Number(row.c)
+  }
+
+  /** Hydrate hero rows for a batch of run rows in ONE additional query (no N+1). */
+  private hydrate(rows: Array<Record<string, unknown>>): RunRecord[] {
+    if (rows.length === 0) return []
+    const ids = rows.map((row) => String(row['id']))
+    const placeholders = ids.map(() => '?').join(', ')
+    const heroRows = this.db
+      .prepare(`SELECT * FROM run_heroes WHERE run_id IN (${placeholders}) ORDER BY run_id, hero_key, slot`)
+      .all(...ids) as Array<Record<string, unknown>>
+    const heroesByRun = new Map<string, RunHeroRecord[]>()
+    for (const heroRow of heroRows) {
+      const runId = String(heroRow['run_id'])
+      const list = heroesByRun.get(runId) ?? []
+      list.push(this.rowToHero(heroRow))
+      heroesByRun.set(runId, list)
+    }
+    return rows.map((row) => ({
+      ...this.rowToRun(row),
+      heroes: heroesByRun.get(String(row['id'])) ?? [],
+    }))
+  }
+
+  private rowToHero(row: Record<string, unknown>): RunHeroRecord {
+    return {
+      heroKey: Number(row['hero_key']),
+      levelStart: row['level_start'] === null ? null : Number(row['level_start']),
+      levelEnd: row['level_end'] === null ? null : Number(row['level_end']),
+      xpGained: row['xp_gained'] === null ? null : Number(row['xp_gained']),
+      slot: Number(row['slot']), // already canonical (-1 sentinel) in storage
+    }
   }
 
   private rowToRun(row: Record<string, unknown>): Omit<RunRecord, 'heroes'> {
