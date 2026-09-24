@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkForUpdates } from './updater'
+import { initSaveSource, registerSaveSourceIpc } from './save-source'
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
@@ -37,6 +38,8 @@ function createMainWindow(): BrowserWindow {
 app.whenReady().then(() => {
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('app:check-for-updates', () => checkForUpdates())
+  registerSaveSourceIpc()
+  void initSaveSource()
 
   mainWindow = createMainWindow()
 
