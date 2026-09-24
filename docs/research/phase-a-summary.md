@@ -55,7 +55,12 @@ Companion documents:
 5. **Analytics discipline is settled by prior art.** Rates are SUM(value)/SUM(time) — never mean
    of per-run rates; wallet gold is never per-run gold; run identity is the end timestamp; skip ≠
    vanish; didn't-read ≠ read-zero (ok/err envelopes); measured and estimated never mix without
-   a visible label; recommendations gate at 3/10/20 successful valid runs.
+   a visible label; recommendations gate at 3/10/20 successful valid clears. Two performance
+   concepts are kept strictly separate: success-run performance (diagnostics over successful
+   clears) vs **farm economics** (Active XP/hour and Gold/hour whose denominator includes ALL
+   legitimate farming attempt time — success, fail, abandon — so difficult stages are not
+   overestimated); Session rate is the wall-clock span of the session. Validity is evidence-based,
+   never duration-based (`farm-analytics.md`).
 
 ## Decisions proposed for TBH Core (detail in the companion docs)
 
@@ -69,6 +74,11 @@ Companion documents:
 - Metric hierarchies: RUN XP = live accumulator → tagged in-memory save fallback → file save for
   validation only; RUN GOLD = live cumulative combat → tagged save cumulative; wallet never
   (`telemetry-contract.md` §1–2).
+- Rate concepts: success-run performance (diagnostics over successful clears) kept strictly
+  separate from farm economics (recommendation basis); Active rate = attempt time including
+  legitimate fails/abandons; Session rate = wall-clock session span (loading, transitions and
+  menus inside the span included; game-closed/disconnected time excluded); validity is
+  evidence-based, never duration-based (`farm-analytics.md` §1–3).
 - Reconciliation: deltas over save-timestamp-anchored windows; tolerance families (flush-lag vs
   oracle) to be **empirically calibrated in Phase B+** — no invented percentage thresholds;
   conflict handling demotes memory health rather than silently preferring either side.
@@ -82,10 +92,16 @@ No parsers, no memory code, no migrations, no UI changes, no new dependencies, n
 no game files touched; `D:\VSC\tbh-meter` untouched (read-only commands only; upstream verified
 via the GitHub API rather than fetching inside it).
 
-## Open questions for the maintainer
+## Decisions resolved during the Phase A review pass (2026-09-24)
 
-1. Ship a fallback ES3 password constant, or extract-at-runtime only? (license-audit §1).
-2. Hero levels in the build fingerprint: include (accuracy) vs exclude (TBH-DPS's
-   calibration-stability trade-off)? Default proposed: include.
-3. Success-rate/variance confidence demotion thresholds (farm-analytics §4) need real-data
-   calibration — ship as named constants.
+1. **ES3 password** — decided: MVP ships no hard-coded password; user override → runtime
+   extraction from the user's own install → clear diagnostic + manual override. Recorded in
+   `save-source.md` §6 and `license-audit.md` §1.
+2. **Hero levels and the build fingerprint** — decided: levels are run/build CONTEXT (stored per
+   run, surfaced in diagnostics), never hashed into `buildFingerprintId`; ordinary leveling must
+   not fragment samples (`farm-analytics.md` §6).
+3. **Variance / low-success confidence thresholds** — no unvalidated numeric thresholds in MVP;
+   moved to future empirical calibration. MVP confidence uses successful sample count,
+   data/source quality, conflict state, reader health (`farm-analytics.md` §5).
+
+No open questions remain from Phase A.

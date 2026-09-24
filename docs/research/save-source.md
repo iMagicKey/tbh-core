@@ -119,9 +119,19 @@ unknown keys (all reference parsers do) and must NOT fail on type drift (`FlexFl
 - Poll mtime (default ~5 s) + read only on change; directory-watch optional later; treat
   `%16 != 0` ciphertext and decrypt/parse failures as transient mid-write (retry, keep
   last-good).
-- ES3 decode exactly as §2; password resolution order: user config → auto-extract from local
-  game assets (both proven regexes above) → known-value fallback, with provenance surfaced.
-  Decision needed from maintainers on shipping the fallback constant (see license-audit).
+- ES3 decode exactly as §2. **Password strategy (maintainers' decision, recorded 2026-09-24):**
+  TBH Core MVP does **NOT** ship a hard-coded ES3 password as its primary strategy. Resolution
+  order:
+  1. explicit user override, if configured;
+  2. automatic extraction of the current password from the user's own installed game assets
+     (the two proven regexes in §2);
+  3. if automatic extraction fails — surface a clear diagnostic and allow manual override.
+
+  No silent fallback to a compiled historical password in MVP. Reasons: update resilience
+  (extraction survives password rotation), transparency, no reliance on a stale embedded value,
+  and no unnecessary redistribution of a game-specific secret/constant. The parser must be
+  structured so another password provider could be added later. No production implementation in
+  this PR.
 - Parse ids as strings (2^53 trap); ignore unknown keys; tolerate number-or-string floats.
 - Emit `SaveCheckpoint` observations with `observedAt = lastSavedTime` (NOT wall clock),
   provenance `SAVE`, confidence `checkpoint`; never present a checkpoint delta as a measured run.

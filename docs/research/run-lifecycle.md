@@ -135,9 +135,15 @@ Rules TBH Core must keep from the evidence:
    the trailing boss chest.
 2. **Identity by timestamp** (run end, ms), never a counter/session (restart-collision bug class).
 3. **Cursor seeding on attach** — never replay pre-existing log entries.
-4. **Emit every run; classify downstream** — skip (<15 s floor, x-10 exempt), partial (capture
-   <95 % or zero damage) and degraded (heroes/gold/xp source failures) are *labels on the record*,
-   not silent drops ("skip ≠ vanish").
+4. **Emit every run; classify downstream** — capture quality (`partial`: <95 % of the official
+   clear observed, or a success with zero damage), field-level source failures and validity
+   evidence are *labels on the record*, not silent drops ("skip ≠ vanish"). Validity is
+   evidence-based (telemetry completeness, valid terminal event, supported fingerprint, sane
+   stage identity, garbage checks, reconciliation state) — **never a duration floor**: a very
+   fast run is at most a diagnostic anomaly, never automatically invalid. The duration floors
+   the reference projects use (tbh-meter's 30 s→15 s with the x-10 exemption, tbh-copilot's
+   5–900 s window) are their own calibrated product choices, documented in §2 as evidence, not
+   adopted by TBH Core (see `farm-analytics.md` §3).
 5. **Interrupted runs are discarded**, not recorded (game exit) — but a *closed* pending success
    must be flushed before discarding.
 6. **Save-source runs (if ever used while memory is unavailable)** cannot distinguish

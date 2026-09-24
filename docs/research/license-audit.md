@@ -19,13 +19,10 @@ from each repo's LICENSE/manifests by this phase's source audits.
 
 1. **The ES3 password (`emuMqG3bLYJ938ZDCfieWJ`)** — community-published (taskbarhero.wiki Save
    Inspector), present in 5 of 7 repos, extractable at runtime from the local game install by two
-   proven methods (see save-source.md §2). Options:
-   a. **Extract from the local install at runtime, never ship the constant** (TBH-Optimizer
-      posture) — cleanest legally; slightly more code;
-   b. ship the known value as a fallback with clear provenance (majority posture).
-   RECOMMENDATION: (a) primary + user-config override; if a fallback constant is ever shipped,
-   record the decision in an attribution doc. This document does NOT decide it — flagged for the
-   maintainer.
+   proven methods (see save-source.md §2).
+   **DECIDED (maintainers, 2026-09-24):** TBH Core MVP does not ship the constant. Resolution
+   order: user override → automatic extraction from the user's own install → clear diagnostic +
+   manual override on failure. No silent compiled-historical fallback. See `save-source.md` §6.
 2. **Game-derived data** (item tables, stage catalogs, drop rates, level curve, icons): the
    extraction *techniques* (UnityPy/latin1-slicing/regex from sharedassets; wiki endpoints) are
    knowledge. Redistributing extracted tables/icons in TBH Core: avoid for MVP (not needed — the

@@ -120,9 +120,10 @@ Definitions:
 - **Confidence upgrades/downgrades**: `measured` → `verified` when a fresh aligned checkpoint is
   consistent; → `conflicted` on conflict; → `checkpoint`/`supplementary` for save/log-only
   values; `estimated` only for explicitly-labeled model features.
-- **Exclusion from recommendations**: a run is excluded from farm analytics if it is `partial`,
-  `degraded` in the metric being aggregated (gold/xp err), `conflicted` and unresolved, or its
-  memory-source fingerprint/health epoch differs from the current trusted one.
+- **Exclusion from farm economics**: a run is excluded from economic rates only when it is a
+  telemetry artifact — `partial` capture, unresolved `conflict`, unsupported-reader capture — or
+  the specific metric field failed (`ok:false`). Legitimate failed attempts are NEVER excluded:
+  their time is part of the farming cost (see `farm-analytics.md` §1).
 
 ## 5. Proposed data contracts (documentation-level TypeScript)
 
@@ -143,27 +144,37 @@ export type ConfidenceLevel =
   | "checkpoint"   // save-snapshot value (correct at its timestamp, lagged)
   | "derived"      // computed from measured values (DPS, rates)
   | "estimated"    // model output — MUST be visibly labeled, never mixed with measured
-  | "conflict"     | "unavailable";
+  | "conflict"
+  | "unavailable";
 
 export type SourceHealth =
   | "disconnected" | "detecting" | "healthy" | "degraded" | "unsupported_game_version"
   | "calibration_failed";   // entry/exit conditions: memory-source.md §4
 
 // --- observations -----------------------------------------------------------
-export interface Observation<T> {
-  value: T;                       // undefined/null only when status = unavailable
-  source: DataSourceKind;
-  provenance?: MetricProvenance;
-  observedAt: number;             // epoch ms of the SOURCE's truth (save: lastSavedTime/mtime)
-  confidence: ConfidenceLevel;
-  degradedReason?: string;        // e.g. "gold fell back to save", "stage from snapshot"
-}
+// The ok/err envelope (tbh-meter Field pattern) applied to a provenance-carrying observation.
+// INVARIANT: "not read" is NEVER represented as a numeric zero — ok:false + error carries it.
+export type Observation<T> =
+  | {
+      ok: true;
+      value: T;                    // a real zero is a VALID measured zero
+      source: DataSourceKind;
+      provenance?: MetricProvenance;
+      observedAt: number;          // epoch ms of the SOURCE's truth (save: lastSavedTime/mtime)
+      confidence: ConfidenceLevel;
+      degradedReason?: string;     // e.g. "gold fell back to save", "stage from snapshot"
+    }
+  | {
+      ok: false;
+      error: string;               // "didn't read" ≠ "read zero"
+      source: DataSourceKind;
+      observedAt: number;
+    };
 
-export interface Field<T> {       // ok/err envelope (tbh-meter pattern)
-  ok: true;  value: T;
-} | {
-  ok: false; error: string;       // "didn't read" ≠ "read zero"
-}
+// Minimal ok/err envelope for stored fields that don't need full provenance.
+export type Field<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string };
 
 // --- compatibility ----------------------------------------------------------
 export interface GameCompatibility {
@@ -192,7 +203,7 @@ export interface RunLifecycleEvent {
 // --- completed run ----------------------------------------------------------
 export interface HeroRunEntry {
   heroKey: number;
-  level?: number;
+  level?: number;                 // context (diagnostics/level range) — NOT fingerprinted
   xpGained: Field<number>;
   deaths?: number; revives?: number;
   slot?: number;                  // formation position 0..2
@@ -201,20 +212,26 @@ export interface HeroRunEntry {
 export interface CompletedRun {
   id: string;                     // end timestamp ms (identity — never a counter)
   startedAt: number; endedAt: number;
-  outcome: "success" | "fail" | "abandoned";
+  outcome: "success" | "fail" | "abandoned";   // the terminal event that closed the attempt
   stage: Field<{ key: number; act: number; stageNo: number; difficulty: number }>;
-  durationMs: number;
+  durationMs: number;             // attempt time (baselines -> terminal event)
   officialClearTimeS?: number;
-  clearQuality: "complete" | "partial";     // partial-capture flag
-  xp: Observation<number> & { perHero?: HeroRunEntry[] };
-  gold: Observation<number>;                // combat gold only (SubKey 1)
+  capture: "complete" | "partial";            // telemetry completeness (partial-capture flag)
+  xp: Observation<number>;                    // ACTUAL measured XP of THIS attempt
+  xpPerHero?: HeroRunEntry[];
+  gold: Observation<number>;                  // ACTUAL measured combat gold (SubKey 1) of THIS attempt
   damage?: number; mobsKilled?: number; mobsTotal?: number;
   drops: Field<Array<{ boxTier: 0 | 1 | 2 }>>;
   party: Field<HeroRunEntry[]>;
-  buildFingerprintId?: string;     // link into build epochs (farm-analytics.md)
+  buildFingerprintId?: string;     // link into build epochs (farm-analytics.md §6)
   gameVersion: string; buildFingerprint?: string;
   sourceHealthEpoch?: string;      // reader health epoch at capture time
   reconciliation?: RunReconciliation;
+  // NOTE — economic eligibility is DERIVED (at analytics time), not stored:
+  //   eligible for farm economics ⇔ outcome is a legitimate terminal attempt AND capture is
+  //   "complete" AND no unresolved conflict AND the source epoch was supported/healthy.
+  //   A legitimate fail/abandon IS eligible (its measured rewards and its time both count);
+  //   only telemetry artifacts are excluded. See farm-analytics.md §3 (inclusion matrix).
 }
 
 // --- reconciliation ---------------------------------------------------------
@@ -238,16 +255,22 @@ export interface TelemetryConflict {       // surfaced to UI / diagnostics
 }
 
 // --- build fingerprint ------------------------------------------------------
+// Identity inputs ONLY (see farm-analytics.md §6). Hero levels are CONTEXT, not identity:
+// they live on the CompletedRun/epoch context so ordinary leveling never fragments samples.
 export interface BuildFingerprint {
   id: string;                     // short stable hash, internal
-  partyHeroKeys: number[];        // MUST
-  heroLevels: Record<number, number>;       // MUST
+  partyHeroKeys: number[];                                  // MUST
   equippedItems: Record<number, Array<{ itemKey: number; enchantSummary: string }>>; // MUST
-  equippedSkills: Record<number, number[]>; // SHOULD
-  skillTreeSummary?: Record<number, number>; // SHOULD (invested levels)
-  runes?: Array<{ key: number; level: number }>;             // SHOULD (account-wide)
-  petKey?: number | null;                                       // LATER
+  equippedSkills?: Record<number, number[]>;                // MUST when reliably observable
+  skillTreeSummary?: Record<number, number>;                // MUST when reliably observable
+  runes?: Array<{ key: number; level: number }>;            // MUST when material + observable
+  petKey?: number | null;                                   // LATER
   createdAt: number; replacedBy?: string;
+}
+
+// Adjacent context (stored per run/epoch, never hashed into the fingerprint id):
+export interface BuildContext {
+  heroLevels: Record<number, { start?: number; end?: number }>;  // diagnostics / level range
 }
 ```
 
