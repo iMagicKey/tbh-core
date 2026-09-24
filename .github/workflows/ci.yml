@@ -20,7 +20,13 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - run: pnpm install --no-frozen-lockfile
+      # memory-reader helper: tests + self-contained build (fails the job on breakage)
+      - run: pnpm helper:test
+      - run: pnpm helper:build
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build

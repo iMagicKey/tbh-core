@@ -17,8 +17,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm typecheck && pnpm test && pnpm build",
-    "dist:win": "pnpm build && electron-builder --win nsis --x64",
-    "release": "pnpm build && electron-builder --win nsis --x64 --publish always"
+    "dist:win": "pnpm helper:build && pnpm build && node scripts/verify-helper-artifact.js && electron-builder --win nsis --x64",
+    "release": "pnpm helper:build && pnpm build && node scripts/verify-helper-artifact.js && electron-builder --win nsis --x64 --publish always",
+    "helper:test": "python -m unittest discover -s helper/memory-reader/tests -v",
+    "helper:build": "python helper/memory-reader/build.py"
   },
   "dependencies": {
     "electron-updater": "6.8.9",
@@ -72,6 +74,12 @@
         "provider": "github",
         "owner": "iMagicKey",
         "repo": "TBH-Core"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "helper/memory-reader/dist/tbh-core-reader",
+        "to": "reader"
       }
     ]
   }
