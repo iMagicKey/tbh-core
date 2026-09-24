@@ -62,6 +62,9 @@ export interface RunInput {
   reconciliationStatus: string | null
   heroes: RunHeroInput[]
   createdAtMs: number
+  /** Memory-reader provenance (migration 002; null for non-memory runs). */
+  readerVersion: string | null
+  memoryProfileId: string | null
 }
 
 export interface RunRecord extends Omit<RunInput, 'heroes'> {
@@ -114,6 +117,8 @@ export function computeRunContentHash(input: RunInput): string {
     input.gameFingerprint ?? '',
     input.sourceHealthEpoch ?? '',
     input.reconciliationStatus ?? '',
+    input.readerVersion ?? '',
+    input.memoryProfileId ?? '',
     ...[...input.heroes]
       .sort((a, b) => a.heroKey - b.heroKey || canonicalSlot(a.slot) - canonicalSlot(b.slot))
       .map(
@@ -149,8 +154,9 @@ export class RunRepository {
             duration_ms, official_clear_time_ms, outcome, capture_quality,
             xp_value, xp_source, xp_confidence, gold_value, gold_source, gold_confidence,
             damage, average_dps, mobs_killed, mobs_total, game_version, game_fingerprint,
-            source_health_epoch, reconciliation_status, created_at_ms
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            source_health_epoch, reconciliation_status, created_at_ms,
+            reader_version, memory_profile_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
@@ -179,6 +185,8 @@ export class RunRepository {
           input.sourceHealthEpoch,
           input.reconciliationStatus,
           input.createdAtMs,
+          input.readerVersion,
+          input.memoryProfileId,
         )
       const insertHero = this.db.prepare(
         `INSERT INTO run_heroes (run_id, hero_key, level_start, level_end, xp_gained, slot)
@@ -307,6 +315,8 @@ export class RunRepository {
       sourceHealthEpoch: (row['source_health_epoch'] as string | null) ?? null,
       reconciliationStatus: (row['reconciliation_status'] as string | null) ?? null,
       createdAtMs: Number(row['created_at_ms']),
+      readerVersion: (row['reader_version'] as string | null) ?? null,
+      memoryProfileId: (row['memory_profile_id'] as string | null) ?? null,
     }
   }
 

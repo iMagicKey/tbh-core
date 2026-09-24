@@ -12,7 +12,7 @@ describe('DatabaseManager', () => {
     expect(ok).toBe(true)
     const status = manager.getStatus()
     expect(status.state).toBe('healthy')
-    expect(status.schemaVersion).toBe(1)
+    expect(status.schemaVersion).toBe(2)
     expect(status.databasePath).toBeTruthy()
     manager.close()
     expect(manager.getStatus().state).toBe('closed')
@@ -95,7 +95,7 @@ describe('DatabaseManager', () => {
     const pathB = tempDbPath()
     expect(manager.open(pathA)).toBe(true)
     expect(manager.filename).toBe('test.sqlite3')
-    expect(manager.getStatus().schemaVersion).toBe(1)
+    expect(manager.getStatus().schemaVersion).toBe(2)
 
     // reopen on a different path: old connection closed, new one tracked
     expect(manager.open(pathB)).toBe(true)

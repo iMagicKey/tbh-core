@@ -14,6 +14,7 @@
 
 import type { DatabaseSync } from 'node:sqlite'
 import { migration001 } from './001-initial'
+import { migration002 } from './002-memory-run-provenance'
 
 export interface Migration {
   version: number
@@ -22,7 +23,7 @@ export interface Migration {
   up: (exec: (sql: string) => void) => void
 }
 
-export const MIGRATIONS: readonly Migration[] = [migration001]
+export const MIGRATIONS: readonly Migration[] = [migration001, migration002]
 
 export class MigrationError extends Error {
   constructor(

@@ -8,13 +8,15 @@
 //   * the save source itself has no dependency on persistence classes.
 
 import type { SaveCheckpointSource } from '../sources/save/SaveCheckpointSource'
+import type { MemorySource } from '../sources/memory/MemorySource'
+import { toRunInput } from '../sources/memory/adapter'
 import type { DatabaseStatsDto, DatabaseStatusDto } from '../shared/database'
 import type { DatabaseManager } from './DatabaseManager'
 import { CheckpointRepository } from './repositories/CheckpointRepository'
-import { RunRepository } from './repositories/RunRepository'
+import { RunConflictError, RunRepository } from './repositories/RunRepository'
 import { SessionRepository } from './repositories/SessionRepository'
 import { BuildRepository } from './repositories/BuildRepository'
-import { SourceHealthRepository } from './repositories/SourceHealthRepository'
+import { sanitizeDetail, SourceHealthRepository } from './repositories/SourceHealthRepository'
 
 export class PersistenceWiring {
   private readonly checkpoints: CheckpointRepository | null
@@ -25,6 +27,8 @@ export class PersistenceWiring {
   private lastWriteAt: number | null = null
   private unsubscribeCheckpoint: (() => void) | null = null
   private unsubscribeHealth: (() => void) | null = null
+  private unsubscribeRun: (() => void) | null = null
+  private unsubscribeMemoryHealth: (() => void) | null = null
 
   constructor(private readonly dbManager: DatabaseManager) {
     const db = dbManager.getDatabase()
@@ -65,14 +69,60 @@ export class PersistenceWiring {
   detach(): void {
     this.unsubscribeCheckpoint?.()
     this.unsubscribeHealth?.()
+    this.unsubscribeRun?.()
+    this.unsubscribeMemoryHealth?.()
     this.unsubscribeCheckpoint = null
     this.unsubscribeHealth = null
+    this.unsubscribeRun = null
+    this.unsubscribeMemoryHealth = null
   }
 
   /** Detach listeners and close the database (app shutdown). */
   close(): void {
     this.detach()
     this.dbManager.close()
+  }
+
+  /**
+   * Wire the memory source to persistence: completed runs -> runs table,
+   * health transitions -> source_health_events (source_kind='memory').
+   * Same failure contract as the save source: persistence problems never stop
+   * the source; a run-id conflict surfaces as a persistence diagnostic.
+   */
+  attachMemorySource(source: MemorySource): void {
+    const runs = this.runs
+    const health = this.health
+    if (!runs || !health) return
+    this.unsubscribeRun = source.onCompletedRun((run) => {
+      try {
+        const result = runs.insertRun(toRunInput(run, Date.now()))
+        if (result.inserted) this.lastWriteAt = Date.now()
+        this.dbManager.markHealthy()
+      } catch (error) {
+        if (error instanceof RunConflictError) {
+          // typed conflict: surface as a persistence diagnostic, never overwrite
+          this.dbManager.markDegraded(error)
+        } else {
+          this.dbManager.markDegraded(error)
+        }
+      }
+    })
+    this.unsubscribeMemoryHealth = source.onHealthChange((status) => {
+      try {
+        const wrote = health.recordTransition(
+          'memory',
+          {
+            state: status.state,
+            reasonCode: status.reasonCode,
+            detail: sanitizeDetail(status.detail),
+          },
+          Date.now(),
+        )
+        if (wrote) this.lastWriteAt = Date.now()
+      } catch (error) {
+        this.dbManager.markDegraded(error)
+      }
+    })
   }
 
   getStatus(): DatabaseStatusDto {
