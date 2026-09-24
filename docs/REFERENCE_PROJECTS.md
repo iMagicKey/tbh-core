@@ -2,6 +2,13 @@
 
 These repositories are research inputs, not upstream dependencies by default.
 
+> Phase A (2026-09-24) audited all of them at source level — per-repo matrix in
+> [`research/reference-matrix.md`](research/reference-matrix.md), licensing in
+> [`research/license-audit.md`](research/license-audit.md). Notable audit outcomes:
+> `tbh-companion` declares MIT only in `app/package.json` and ships no LICENSE file;
+> `tbh-codown` has no license at all — both are study-only. `WarmBed/TBH-DPS-dashboard`
+> is a BepInEx in-process mod (its data knowledge transfers; its architecture never does).
+
 ## mad-labs-org/tbh-meter
 
 Research targets:

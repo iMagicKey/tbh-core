@@ -1,0 +1,4 @@
+# electron-winstaller (Squirrel.Windows) is a transitive dep we never use — the project
+# packages with NSIS via electron-builder. Its postinstall script stays disabled.
+allowBuilds:
+  electron-winstaller: false
