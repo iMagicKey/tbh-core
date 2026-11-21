@@ -31,6 +31,15 @@ declare global {
       getDatabaseStats(): Promise<
         import('./database').DatabaseStatsDto | null
       >
+      getMemoryStatus(): Promise<
+        import('./memory-source').MemoryStatusDto | null
+      >
+      getMemoryLive(): Promise<
+        import('./memory-source').MemoryLiveDto | null
+      >
+      restartMemorySource(): Promise<
+        import('./memory-source').MemoryStatusDto | null
+      >
     }
   }
 }

@@ -1,0 +1,3 @@
+# Build-time dependencies ONLY (runtime is Python stdlib).
+# Pinned for reproducible helper builds (see docs/implementation/memory-source.md).
+pyinstaller==6.10.0

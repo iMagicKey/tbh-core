@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { SaveSourceStateName } from '../shared/save-source'
+import type { MemoryStateName } from '../shared/memory-source'
 import { SaveDiagnostics } from './components/SaveDiagnostics'
+import { MemoryLive } from './components/MemoryLive'
+import { MemoryDiagnostics } from './components/MemoryDiagnostics'
 
 type Page = 'Live' | 'Farm' | 'Runs' | 'Compare'
 
@@ -26,6 +29,7 @@ export function App() {
   const [locale, setLocale] = useState<'en' | 'ru'>('en')
   const [version, setVersion] = useState('dev')
   const [saveState, setSaveState] = useState<SaveSourceStateName | null>(null)
+  const [memoryState, setMemoryState] = useState<MemoryStateName | null>(null)
   const t = useMemo(() => copy[locale], [locale])
 
   useEffect(() => {
@@ -35,6 +39,7 @@ export function App() {
   useEffect(() => {
     const reload = () => {
       void window.tbhCore?.getSaveStatus().then((status) => setSaveState(status?.state ?? null))
+      void window.tbhCore?.getMemoryStatus().then((status) => setMemoryState(status?.state ?? null))
     }
     reload()
     const timer = window.setInterval(reload, 5_000)
@@ -87,27 +92,42 @@ export function App() {
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-2xl font-semibold">{page}</h2>
           <div className="flex gap-3 text-xs">
-            <span className="rounded-full border border-zinc-800 px-3 py-1 text-zinc-500">Memory: offline</span>
+            <MemoryStatePill state={memoryState} />
             <SaveStatePill state={saveState} />
             <span className="rounded-full border border-zinc-800 px-3 py-1 text-zinc-500">Log: offline</span>
           </div>
         </div>
 
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-8">
-          <div className="max-w-xl">
-            <p className="text-lg font-medium">{t.waiting}</p>
-            <p className="mt-2 text-sm leading-6 text-zinc-500">{t.sourceHint}</p>
-          </div>
-        </section>
-
-        {page === 'Live' && (
-          <div className="mt-6">
+        {page === 'Live' ? (
+          <div className="space-y-6">
+            <MemoryLive locale={locale} />
+            <MemoryDiagnostics locale={locale} />
             <SaveDiagnostics locale={locale} />
           </div>
+        ) : (
+          <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-8">
+            <div className="max-w-xl">
+              <p className="text-lg font-medium">{t.waiting}</p>
+              <p className="mt-2 text-sm leading-6 text-zinc-500">{t.sourceHint}</p>
+            </div>
+          </section>
         )}
       </main>
     </div>
   )
+}
+
+function MemoryStatePill({ state }: { state: MemoryStateName | null }) {
+  const label = `Memory: ${state ?? 'offline'}`
+  const tone =
+    state === 'healthy'
+      ? 'border-emerald-900 text-emerald-400'
+      : state === 'degraded' || state === 'detecting'
+        ? 'border-amber-900 text-amber-400'
+        : state === 'unsupported_game_version' || state === 'calibration_failed'
+          ? 'border-red-900 text-red-400'
+          : 'border-zinc-800 text-zinc-500'
+  return <span className={`rounded-full border px-3 py-1 ${tone}`}>{label}</span>
 }
 
 function SaveStatePill({ state }: { state: SaveSourceStateName | null }) {

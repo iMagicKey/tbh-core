@@ -117,6 +117,8 @@ function makeRun(overrides: Partial<RunInput> = {}): RunInput {
       { heroKey: 301, levelStart: 37, levelEnd: 38, xpGained: 60_000.5, slot: 1 },
     ],
     createdAtMs: 1_760_000_020_100,
+    readerVersion: null,
+    memoryProfileId: null,
     ...overrides,
   }
 }

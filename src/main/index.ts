@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { checkForUpdates } from './updater'
 import { createSaveSource, getSaveSource, registerSaveSourceIpc } from './save-source'
 import { initPersistence, registerPersistenceIpc, shutdownPersistence } from './persistence'
+import { createMemorySource, getMemorySource, registerMemoryIpc } from './memory-source'
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
@@ -41,16 +42,23 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:check-for-updates', () => checkForUpdates())
   registerSaveSourceIpc()
   registerPersistenceIpc()
+  registerMemoryIpc()
 
-  // Phase C startup ordering: DB opens first (failure = degraded, never a crash);
-  // the save source is then CREATED, persistence listeners attach, and only then
-  // does the source start — the first checkpoint/health event can never be missed.
+  // Phase D startup ordering: persistence first, then sources are CREATED,
+  // listeners attached, and only then started — no first event is ever missed.
+  // A missing/failed database or helper degrades that source only — never the app.
   const persistence = initPersistence()
-  const source = await createSaveSource().catch(() => null)
-  if (persistence && source) {
-    persistence.attachTo(source)
+  const saveSource = await createSaveSource().catch(() => null)
+  if (persistence && saveSource) {
+    persistence.attachTo(saveSource)
   }
-  source?.start()
+  const memorySource = createMemorySource()
+  if (persistence && memorySource) {
+    persistence.attachMemorySource(memorySource)
+  }
+
+  saveSource?.start()
+  memorySource?.start()
 
   mainWindow = createMainWindow()
 
@@ -62,6 +70,9 @@ app.whenReady().then(async () => {
 })
 
 app.on('will-quit', () => {
+  // Phase D shutdown ordering: memory first (it can emit final events), then
+  // the save source, then the database — SQLite never closes before sources stop.
+  getMemorySource()?.stop()
   shutdownPersistence(getSaveSource())
 })
 

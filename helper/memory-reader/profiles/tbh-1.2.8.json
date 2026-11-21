@@ -1,0 +1,278 @@
+{
+  "schemaVersion": 1,
+  "gameVersion": "1.2.8",
+  "gameFingerprint": "1.2.8-0x6ab23e8a-0x6b47000",
+  "profileId": "tbh-1.2.8-a",
+  "provenance": {
+    "source": "tbh-meter local 1.2.8 adaptation (MIT)",
+    "upstreamRepo": "https://github.com/mad-labs-org/tbh-meter",
+    "referenceCommit": "5bc35e82b514b45814047de57551d08da62c9195 (plus uncommitted 1.2.8 adaptation)",
+    "validatedBy": "tbh-meter validate_live 13/13 PASS on build 1.2.8 (2026-09-24); TBH Core live revalidation 2026-09-25",
+    "notes": "offsets/indices extracted from the adaptation's offsets.py + calib_seed.json"
+  },
+  "process": {
+    "processName": "TaskBarHero.exe",
+    "moduleName": "GameAssembly.dll"
+  },
+  "calibration": {
+    "anchorRva": 103807248,
+    "idxUt": 1041,
+    "indices": {
+      "StageManager": 842,
+      "CommonSaveData": 868,
+      "PlayerSaveData": 872,
+      "LogManager": 1273,
+      "StageClearLog": 1280,
+      "StageFailedLog": 1281,
+      "CurrencySaveData": 1362,
+      "HeroSaveData": 1363,
+      "MonsterSpawnManager": 1378,
+      "HeroInfoData": 1698,
+      "ItemInfoData": 1707,
+      "StageInfoData": 1776
+    }
+  },
+  "il2cpp": {
+    "objKlass": 0,
+    "stringLength": 16,
+    "stringChars": 20,
+    "arrayMaxLength": 24,
+    "arrayData": 32,
+    "listItems": 16,
+    "listSize": 24,
+    "dictEntries": 24,
+    "dictCount": 32,
+    "dictData": 32,
+    "dict8bStride": 24,
+    "dict8bHash": 0,
+    "dict8bNext": 4,
+    "dict8bKey": 8,
+    "dict8bValue": 16,
+    "className": 16,
+    "classElementClass": 64,
+    "classCastClass": 72,
+    "classParent": 88,
+    "classStaticFields": 184,
+    "singletonInstance": 0
+  },
+  "actk": {
+    "layoutVersion": "1.2.8",
+    "notes": "ObscuredInt: hash@0 hidden@4 key@8 fake@C, value=(hidden-key)^key; ObscuredDouble: hash@0 hidden@8(long) key@10(long), value=f64(key ^ byteswap8(hidden)) with ACTkByte8 perm (1,0,2,3,7,4,6,5); key read live each tick",
+    "byte8Perm": [
+      1,
+      0,
+      2,
+      3,
+      7,
+      4,
+      6,
+      5
+    ]
+  },
+  "enums": {
+    "goldCurrencyKey": 100001,
+    "aggregateGoldEarn": 2,
+    "combatSubKey": 1,
+    "stageClearTypeActboss": 1,
+    "difficulties": [
+      "Normal",
+      "Nightmare",
+      "Hell",
+      "Torment"
+    ]
+  },
+  "offsets": {
+    "Unit": {
+      "cache": 976,
+      "healthController": 176,
+      "isHero": 256
+    },
+    "HealthController": {
+      "hpCurrent": 64,
+      "hpMax": 76
+    },
+    "Monster": {
+      "stageKey": 1020
+    },
+    "StageManager": {
+      "heroList": 48,
+      "deadUnitDict": 280
+    },
+    "MonsterSpawnManager": {
+      "monsterList": 40,
+      "summonedList": 48
+    },
+    "LogManager": {
+      "logList": 32
+    },
+    "StageClearLog": {
+      "act": 64,
+      "stage": 68,
+      "clearTime": 72,
+      "isBoss": 76
+    },
+    "StageFailedLog": {
+      "act": 64,
+      "stage": 68,
+      "nowWave": 72,
+      "totalWave": 76
+    },
+    "CommonSaveData": {
+      "playtime": 32,
+      "currentStageKey": 100,
+      "currentStageWave": 104
+    },
+    "PlayerSaveData": {
+      "currencies": 96,
+      "heroes": 104,
+      "aggregates": 192
+    },
+    "CurrencySaveData": {
+      "key": 16,
+      "quantity": 24
+    },
+    "HeroSaveData": {
+      "heroKey": 16,
+      "level": 20,
+      "exp": 32
+    },
+    "AggregateSaveData": {
+      "type": 16,
+      "subKey": 20,
+      "value": 24
+    },
+    "HeroRuntime": {
+      "info": 48,
+      "levelHidden": 208,
+      "levelKey": 212,
+      "expHidden": 280,
+      "expKey": 288
+    },
+    "HeroInfoData": {
+      "heroKey": 48
+    },
+    "StageInfoData": {
+      "stageKey": 48,
+      "stageType": 64,
+      "difficulty": 68,
+      "act": 72,
+      "stageNo": 76,
+      "waveAmount": 84,
+      "waveMobAmount": 88
+    },
+    "AggregateManager": {
+      "aggregates": 32
+    }
+  },
+  "levelCurve": {
+    "1": 30,
+    "2": 150,
+    "3": 500,
+    "4": 1000,
+    "5": 2600,
+    "6": 6500,
+    "7": 13000,
+    "8": 23400,
+    "9": 37440,
+    "10": 74880,
+    "11": 134784,
+    "12": 229133,
+    "13": 366613,
+    "14": 513258,
+    "15": 718561,
+    "16": 970057,
+    "17": 1309577,
+    "18": 1702450,
+    "19": 2042940,
+    "20": 3064410,
+    "21": 3615531,
+    "22": 4157861,
+    "23": 4739962,
+    "24": 5356157,
+    "25": 6266704,
+    "26": 7708046,
+    "27": 9866299,
+    "28": 12135548,
+    "29": 14198591,
+    "30": 15618450,
+    "31": 17180295,
+    "32": 18709341,
+    "33": 20170728,
+    "34": 21528801,
+    "35": 22748528,
+    "36": 23796986,
+    "37": 24644829,
+    "38": 25267650,
+    "39": 25647149,
+    "40": 25772024,
+    "41": 25638532,
+    "42": 25250674,
+    "43": 24619997,
+    "44": 28490088,
+    "45": 32968530,
+    "46": 38150952,
+    "47": 44148014,
+    "48": 51653176,
+    "49": 63533406,
+    "50": 81322760,
+    "51": 100026995,
+    "52": 117031584,
+    "53": 125223795,
+    "54": 133989461,
+    "55": 143368723,
+    "56": 153404534,
+    "57": 164142851,
+    "58": 175632851,
+    "59": 187927151,
+    "60": 201082052,
+    "61": 215157796,
+    "62": 230218842,
+    "63": 241729784,
+    "64": 253816273,
+    "65": 266507087,
+    "66": 279832441,
+    "67": 293824063,
+    "68": 308515266,
+    "69": 323941029,
+    "70": 340138080,
+    "71": 357144984,
+    "72": 375002233,
+    "73": 393752345,
+    "74": 413439962,
+    "75": 434111960,
+    "76": 455817558,
+    "77": 478608436,
+    "78": 559971870,
+    "79": 688765400,
+    "80": 881619712,
+    "81": 1084392246,
+    "82": 1268738928,
+    "83": 1306801096,
+    "84": 1346005129,
+    "85": 1386385283,
+    "86": 1427976841,
+    "87": 1470816146,
+    "88": 1514940630,
+    "89": 1560388849,
+    "90": 1607200514,
+    "91": 1655416529,
+    "92": 1705079025,
+    "93": 1739180606,
+    "94": 1773964218,
+    "95": 1809443502,
+    "96": 1845632372,
+    "97": 1882545019,
+    "98": 1920195919,
+    "99": 1958599837,
+    "100": 1997771834
+  },
+  "lifecycle": {
+    "adoptGraceSeconds": 3.0,
+    "partialCaptureMin": 0.95,
+    "partialGateSeconds": 30,
+    "deadReadSeconds": 5.0,
+    "pollHz": 10,
+    "liveHz": 1,
+    "dpsWindowSeconds": 5.0
+  }
+}

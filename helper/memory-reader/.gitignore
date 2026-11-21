@@ -1,0 +1,8 @@
+# Build artifacts — never tracked (CI builds the helper; see docs/implementation/memory-source.md)
+.build-venv/
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+.pytest_cache/
